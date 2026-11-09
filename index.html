@@ -26,6 +26,8 @@
   #stick0 { left:24px; color:#f2a900; } #stick1 { right:24px; color:#1a8fe0; }
   #touchbar { position:absolute; top:8px; right:8px; z-index:7; display:none; gap:6px; }
   #touchbar button { font-size:16px; padding:6px 10px; }
+  .goo { position:absolute; bottom:180px; z-index:7; display:none; font:800 15px system-ui; padding:12px 14px; border-radius:30px; border:0; background:#62d628; color:#103300; }
+  #goo0 { left:44px; } #goo1 { right:44px; }
 </style>
 </head>
 <body>
@@ -35,6 +37,7 @@
 
 <div class="stick" id="stick0"><div class="knob"></div></div>
 <div class="stick" id="stick1"><div class="knob"></div></div>
+<button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button>
 <div id="touchbar"><button data-k="1">Race</button><button data-k="2">Ball</button><button data-k="r">Reset</button><button data-k="l">Lag</button><button data-k="p">⚙</button></div>
 <div id="budget" class="panel"></div>
 <div id="help" class="panel">
@@ -46,7 +49,8 @@
   <kbd>T</kbd> next track layout (auto picks the most complex one that fits the floor).<br>
   Grey ring = where the camera <i>thinks</i> the robot is (delayed + noisy).<br>
   AI cars (settings): PRO races, BUDDY plays with the kid, NN learns. <kbd>N</kbd> train the NN · <kbd>V</kbd> show what the AI sees.<br>
-  Blue arrows = boost pads (fixed after corners + moving ones). Star = long turbo. Black puddle = oil.
+  Blue arrows = boost pads (fixed after corners + moving ones). Star = long turbo. Black puddle = oil.<br>
+  <b>Goo</b>: pad A/R1/R2 · P1 <kbd>G</kbd> · P2 <kbd>Enter</kbd> — a hit car is slowed for 1.6 s; a miss leaves a sticky puddle for 5 s.
 </div>
 <div id="settings" class="panel"></div>
 
@@ -65,7 +69,7 @@ const DEFAULTS = {
   p1Mode: 'kid', p1Cap: 40, p1Seat: 'bottom', p1Assist: 60,
   p2Mode: 'adult', p2Cap: 100, p2Seat: 'bottom', p2Assist: 0,
   // AI drivers (race only): off | pro | buddy | learner
-  aiA: 'pro', aiB: 'off', aiC: 'off', aiSkill: 70, aiGrip: 1.2, showRays: false,
+  aiA: 'pro', aiB: 'off', aiC: 'off', aiSkill: 70, aiGrip: 1.2, showRays: false, aiGoo: 'on',
   game: 'race',
   corners: null,
 };
@@ -126,6 +130,39 @@ let now = 0; // sim time, seconds
 // ---------- robot model ----------
 const ROBOT_SIZE = 0.12, ROBOT_R = 0.07, ROBOT_M = 0.35;
 const COLORS = ['#ffc21a', '#2fa8ff', '#ff5ca8', '#5fe35c'];
+// pretty top-down race car, drawn once per colour (facing +x; 260 px long)
+const SPRITES = {};
+function shade(hex, f) { const n = parseInt(hex.slice(1), 16), t = f < 0 ? 0 : 255, p = Math.abs(f);
+  const c = [n >> 16, n >> 8 & 255, n & 255].map(v => Math.round((t - v) * p + v)); return `rgb(${c})`; }
+function carSprite(color) {
+  if (SPRITES[color]) return SPRITES[color];
+  const W = 300, H = 200, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); };
+  g.translate(W/2, H/2);
+  for (const x of [-72, 70]) for (const y of [-60, 60]) {   // tyres with a rim highlight
+    g.fillStyle = '#141519'; rr(x - 25, y - 15, 50, 30, 9); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.22)'; rr(x - 20, y - (y < 0 ? 12 : -6), 40, 6, 3); g.fill(); }
+  const body = () => { g.beginPath(); g.moveTo(-118, -48); g.quadraticCurveTo(-126, 0, -118, 48); g.bezierCurveTo(-60, 64, 40, 64, 92, 44);
+    g.quadraticCurveTo(130, 30, 132, 0); g.quadraticCurveTo(130, -30, 92, -44); g.bezierCurveTo(40, -64, -60, -64, -118, -48); g.closePath(); };
+  body(); const gr = g.createLinearGradient(0, -62, 0, 62);   // rounded paint: light on the crown, dark on the flanks
+  gr.addColorStop(0, shade(color, -0.45)); gr.addColorStop(0.22, shade(color, 0.1)); gr.addColorStop(0.42, shade(color, 0.4)); gr.addColorStop(0.6, color); gr.addColorStop(1, shade(color, -0.5));
+  g.fillStyle = gr; g.fill(); g.lineWidth = 4; g.strokeStyle = shade(color, -0.65); g.stroke();
+  g.save(); body(); g.clip();
+  g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(-140, -15, 280, 9); g.fillRect(-140, 6, 280, 9);   // racing stripes
+  g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(40, -64, 6, 128);                                    // bonnet seam
+  g.restore();
+  g.beginPath(); g.ellipse(-10, 0, 44, 31, 0, 0, 7);   // cockpit glass
+  const gl = g.createLinearGradient(-54, -31, 34, 31); gl.addColorStop(0, '#6c7f98'); gl.addColorStop(0.45, '#1b2433'); gl.addColorStop(1, '#090c12');
+  g.fillStyle = gl; g.fill(); g.strokeStyle = 'rgba(0,0,0,.65)'; g.lineWidth = 3; g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = 5; g.lineCap = 'round'; g.beginPath(); g.ellipse(-10, 0, 33, 22, 0, Math.PI*1.08, Math.PI*1.42); g.stroke();
+  g.fillStyle = '#1b1d22'; rr(-132, -60, 17, 120, 5); g.fill(); g.fillStyle = shade(color, -0.25); rr(-128, -52, 9, 104, 3); g.fill();   // rear wing
+  g.fillStyle = '#fff6c4'; for (const y of [-27, 27]) { g.beginPath(); g.ellipse(120, y, 7, 10, 0, 0, 7); g.fill(); }                 // headlights
+  g.fillStyle = '#ff4a3a'; for (const y of [-40, 40]) { rr(-121, y - 6, 5, 12, 2); g.fill(); }                                       // tail lights
+  g.save(); body(); g.clip(); const hl = g.createLinearGradient(0, -62, 0, -8);   // gloss
+  hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.55, 'rgba(255,255,255,.28)'); hl.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = hl; g.fillRect(-140, -62, 280, 54); g.restore();
+  return SPRITES[color] = c;
+}
 class Robot {
   constructor(i, ai) { this.i = i; this.ai = ai || null; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
   reset() {
@@ -133,7 +170,7 @@ class Robot {
     this.x = g.x; this.y = g.y; this.th = g.th;
     this.vx = 0; this.vy = 0; this.w = 0;
     this.cmdQ = []; this.hist = []; this.sensed = { x:this.x, y:this.y, th:this.th, t:0 };
-    this.lastCam = 0; this.boostUntil = 0; this.slowUntil = 0; this.padUntil = 0;
+    this.lastCam = 0; this.boostUntil = 0; this.slowUntil = 0; this.padUntil = 0; this.gooUntil = 0; this.gooCd = 0;
   }
   p(k) { return S['p' + (this.i+1) + k]; }
   get speedLimit() {
@@ -141,11 +178,20 @@ class Robot {
     let m = 1;
     if (now < this.boostUntil) m = Math.max(m, 1.5);   // star: long turbo
     if (now < this.padUntil) m = Math.max(m, 1.7);     // boost pad: short kick
+    if (now < this.gooUntil) m *= !this.ai && this.p('Mode') === 'kid' ? 0.7 : 0.45;   // covered in goo: slow
     return S.maxSpeed * cap / 100 * m;
   }
+  shoot() {   // fire a goo blob forward
+    if (game !== Race || now < this.gooCd) return;
+    this.gooCd = now + 1.2;
+    const c = Math.cos(this.th), s = Math.sin(this.th), sp = Math.max(0, this.vx*c + this.vy*s) + 0.9;
+    Race.goo.push({ x: this.x + c*0.08, y: this.y + s*0.08, vx: c*sp, vy: s*sp, life: 0.7, owner: this, seed: Math.random()*9 });
+  }
+  goo(d) { this.gooUntil = Math.max(this.gooUntil, now + d); }
   // input -> body command (forward speed + yaw rate: 2 driven wheels, no strafing), pushed through Bluetooth delay
   command(inp) {
     if (this.ai) { const c = this.ai.drive(this); this.cmdQ.push({ t: now, v: c.v, w: c.w }); return; }
+    if (inp.fire) this.shoot();
     const vmax = this.speedLimit;
     let v, w;
     if (this.p('Mode') === 'kid') {
@@ -212,15 +258,18 @@ class Robot {
     ctx.strokeStyle = 'rgba(150,150,150,.9)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke(); ctx.setLineDash([]);
     ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th);
-    const h = W2S(ROBOT_SIZE) / 2;
-    if (now < this.boostUntil) { ctx.shadowColor = '#fff7b0'; ctx.shadowBlur = 30; }
-    // wheels (2 driven, one each side)
-    ctx.fillStyle = '#111'; ctx.fillRect(-h*0.55, -h*1.05, h*0.9, h*0.32); ctx.fillRect(-h*0.55, h*0.73, h*0.9, h*0.32);
-    // round body like the micro:bit car
-    ctx.fillStyle = this.color; ctx.strokeStyle = '#1b1d22'; ctx.lineWidth = Math.max(2, h*0.12);
-    ctx.beginPath(); ctx.arc(0, 0, h*0.85, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#1b1d22'; ctx.beginPath(); ctx.moveTo(h*0.75, 0); ctx.lineTo(-h*0.15, -h*0.42); ctx.lineTo(-h*0.15, h*0.42); ctx.fill();
+    const h = W2S(ROBOT_SIZE) / 2, spr = carSprite(this.color), k = W2S(0.138) / 260;
+    // soft shadow cast down-right (canvas shadow offsets ignore the rotation, so it stays put like a real light)
+    if (now < this.boostUntil) { ctx.shadowColor = 'rgba(255,240,150,.95)'; ctx.shadowBlur = W2S(0.03); }
+    else { ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = W2S(0.012); ctx.shadowOffsetX = W2S(0.006); ctx.shadowOffsetY = W2S(0.012); }
+    ctx.drawImage(spr, -spr.width/2*k, -spr.height/2*k, spr.width*k, spr.height*k);
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = ctx.shadowOffsetY = 0;
+    if (now < this.gooUntil) {   // dripping goo on the car
+      ctx.globalAlpha = Math.min(1, (this.gooUntil - now) * 2); ctx.fillStyle = '#7dff3a'; ctx.strokeStyle = '#2f8a0e'; ctx.lineWidth = Math.max(1, W2S(0.002));
+      for (const [x, y, r] of [[0.02, -0.015, 0.016], [-0.02, 0.012, 0.014], [0.035, 0.02, 0.01], [-0.035, -0.02, 0.011], [0, 0.002, 0.012]]) {
+        ctx.beginPath(); ctx.arc(W2S(x), W2S(y), W2S(r * (1 + 0.1*Math.sin(now*8 + x*99))), 0, 7); ctx.fill(); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
     if (this.ai) { ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(10, W2S(0.022))}px system-ui`; ctx.textAlign = 'center';
       ctx.fillText(this.ai.label, W2S(this.x), W2S(this.y) - h - 4); }
@@ -336,7 +385,7 @@ const Race = {
   name: 'race',
   init() {
     this.t = pickTrack(); const t = this.t, per = t.per;
-    this.s0 = Math.min(0.9, per * 0.08); this.p = {}; this.start0 = now;
+    this.s0 = Math.min(0.9, per * 0.08); this.p = {}; this.start0 = now; this.goo = []; this.puddles = [];
     const s0 = this.s0, used = [];
     this.blocked = s => { const d = wrapD(s - s0, per); return d > -0.85 && d < 0.3; };   // start grid + line stay clear
     this.free = (s, gap, extra = []) => !this.blocked(s) && used.concat(extra).every(u => Math.abs(wrapD(s - u, per)) > gap);
@@ -369,6 +418,15 @@ const Race = {
   },
   update() {
     const t = this.t;
+    // goo blobs fly, stick to the first car they touch, or splat on the asphalt as a sticky puddle
+    for (const g of this.goo) {
+      g.x += g.vx*DT; g.y += g.vy*DT; g.life -= DT;
+      for (const r of robots) if (r !== g.owner && Math.hypot(r.x - g.x, r.y - g.y) < r.r + 0.02) { r.goo(1.6); g.dead = true; g.hit = true; break; }
+      if (!g.dead && (g.life <= 0 || !t.onTrack(g.x, g.y))) { g.dead = true; if (t.onTrack(g.x, g.y)) this.puddles.push({ x: g.x, y: g.y, t0: now, seed: g.seed }); }
+    }
+    this.goo = this.goo.filter(g => !g.dead);
+    this.puddles = this.puddles.filter(p => now - p.t0 < 5);
+    for (const p of this.puddles) for (const r of robots) if (Math.hypot(r.x - p.x, r.y - p.y) < 0.05) r.goo(0.6);
     for (const p of this.pads) if (!p.fixed && now >= p.next) {
       const others = this.pads.filter(q => q !== p && q.s != null).map(q => q.s);
       let s = null; for (let k = 0; k < 40 && s == null; k++) { const c = Math.random() * t.per; if (this.free(c, 0.45, others)) s = c; }
@@ -445,6 +503,10 @@ const Race = {
     for (const o of this.oils) if (o.on) this.drawOil(o);
     for (const s of this.stars) if (s.on) { const p = this.item(s), pulse = 1 + 0.08*Math.sin(now*6 + s.s);
       ctx.save(); ctx.shadowColor = '#ffd84a'; ctx.shadowBlur = W2S(0.03); star(W2S(p.x), W2S(p.y), W2S(0.042)*pulse, '#ffd84a'); ctx.restore(); }
+    for (const p of this.puddles) this.drawGoo(p.x, p.y, 0.035, p.seed, Math.min(1, (5 - (now - p.t0))), 0);
+    for (const g of this.goo) { const a = Math.atan2(g.vy, g.vx);
+      for (let k = 1; k <= 3; k++) this.drawGoo(g.x - Math.cos(a)*k*0.018, g.y - Math.sin(a)*k*0.018, 0.009 - k*0.002, g.seed + k, 0.8, 0);
+      this.drawGoo(g.x, g.y, 0.016, g.seed, 1, a); }
     Trainer.draw();
     // track name, small, in the corner
     ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `${Math.max(12, W2S(0.028))}px system-ui`; ctx.textAlign = 'right';
@@ -465,6 +527,19 @@ const Race = {
     const ph = (now * 1.6) % 1;
     for (let k = -1; k < 3; k++) { const x = -L/2 + ((k + ph) / 3) * L + 0.03;
       ctx.beginPath(); ctx.moveTo(W2S(x - 0.03), W2S(-Wd*0.32)); ctx.lineTo(W2S(x), 0); ctx.lineTo(W2S(x - 0.03), W2S(Wd*0.32)); ctx.stroke(); }
+    ctx.restore();
+  },
+  drawGoo(x, y, r, seed, alpha, rot) {   // wobbly glossy green slime
+    if (alpha <= 0) return;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(W2S(x), W2S(y)); ctx.rotate(rot + seed);
+    ctx.beginPath();
+    for (let k = 0; k <= 20; k++) { const a = k / 20 * Math.PI * 2, rr = r * (0.85 + 0.15*Math.sin(a*4 + seed*3 + now*6) + 0.1*Math.sin(a*7 + seed));
+      ctx.lineTo(W2S(Math.cos(a)*rr), W2S(Math.sin(a)*rr)); }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(W2S(-r*0.3), W2S(-r*0.3), 0, 0, 0, W2S(r*1.1));
+    g.addColorStop(0, '#d8ff9e'); g.addColorStop(0.35, '#7dff3a'); g.addColorStop(1, '#2f9a0e');
+    ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = 'rgba(20,80,0,.8)'; ctx.lineWidth = Math.max(1, W2S(0.002)); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.beginPath(); ctx.ellipse(W2S(-r*0.35), W2S(-r*0.35), W2S(r*0.25), W2S(r*0.13), -0.6, 0, 7); ctx.fill();
     ctx.restore();
   },
   drawOil(o) {   // glossy black puddle with a rainbow sheen
@@ -636,6 +711,11 @@ class TrackDriver {
       }
     }
     if (now > this.laneUntil) this.laneT = 0;
+    // goo: fire at a car lined up ahead (BUDDY never goos the child)
+    if (S.aiGoo === 'on') for (const o of robots) if (o !== r && !(this.kind === 'buddy' && o === kidRobot())) {
+      const dx = o.sensed.x - P.x, dy = o.sensed.y - P.y, c = Math.cos(P.th), s = Math.sin(P.th), fwd = dx*c + dy*s, lat = -dx*s + dy*c;
+      if (fwd > 0.12 && fwd < 0.6 && Math.abs(lat) < 0.04 && Math.random() < 0.03) r.shoot();
+    }
     if (this.kind === 'buddy') {
       const k = kidRobot();
       if (k && k !== r) {
@@ -760,15 +840,15 @@ const keys = new Set();
 addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); hotkey(e); });
 addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 const KB = [
-  { u:'w', d:'s', l:'a', r:'d', rl:'q', rr:'e' },
-  { u:'arrowup', d:'arrowdown', l:'arrowleft', r:'arrowright', rl:',', rr:'.' },
+  { u:'w', d:'s', l:'a', r:'d', rl:'q', rr:'e', f:'g' },
+  { u:'arrowup', d:'arrowdown', l:'arrowleft', r:'arrowright', rl:',', rr:'.', f:'enter' },
 ];
 const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v)*0.12) / 0.88;
 function readInput(i) {
   const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean);
   const gp = pads[i];
-  let lx = 0, ly = 0, rx = 0;
-  if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); }
+  let lx = 0, ly = 0, rx = 0, fire = !!touchFire[i];
+  if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); fire ||= [0, 5, 7].some(b => gp.buttons[b] && gp.buttons[b].pressed); }
   const ts = touch[i];
   if (ts) {
     // kid mode: stick = direction to go. robot-relative: up/down = forward/back, left/right = turn
@@ -779,13 +859,16 @@ function readInput(i) {
     if (keys.has(k.l)) lx -= 1; if (keys.has(k.r)) lx += 1;
     if (keys.has(k.u)) ly -= 1; if (keys.has(k.d)) ly += 1;
     if (keys.has(k.rl)) rx -= 1; if (keys.has(k.rr)) rx += 1;
+    if (keys.has(k.f)) fire = true;
   }
   const m = Math.hypot(lx, ly); if (m > 1) { lx /= m; ly /= m; }
-  return { lx, ly, rx: clamp(rx, -1, 1), pad: !!gp };
+  return { lx, ly, rx: clamp(rx, -1, 1), fire, pad: !!gp };
 }
 
 // ---------- touch joysticks (left = P1, right = P2) ----------
-const touch = [null, null];
+const touch = [null, null], touchFire = [false, false];
+['goo0', 'goo1'].forEach((id, i) => { const b = document.getElementById(id);
+  b.addEventListener('pointerdown', e => { touchFire[i] = true; e.preventDefault(); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => touchFire[i] = false); });
 const isTouch = matchMedia('(pointer:coarse)').matches || /[?&]touch/.test(location.search);
 document.querySelectorAll('.stick').forEach((el, i) => {
   const knob = el.querySelector('.knob'); let id = null;
@@ -850,6 +933,7 @@ function buildSettings() {
     }
     if (title.startsWith('AI')) {
       for (const k of ['aiA', 'aiB', 'aiC']) h += `<div class="row"><label>AI car ${k.at(-1)}</label><select data-k="${k}"><option value="off">off</option><option value="pro">PRO (racer)</option><option value="buddy">BUDDY (plays with the kid)</option><option value="learner">NN (learns, N = train)</option></select></div>`;
+      h += `<div class="row"><label>AI shoots goo</label><select data-k="aiGoo"><option value="on">yes</option><option value="off">no</option></select></div>`;
       h += `<div class="row"><button id="trainBtn">Train NN (N)</button><button id="brainReset">Forget NN</button></div>`;
     }
     if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`
@@ -906,7 +990,7 @@ function makeRobots() {
   if (game === Race) for (const k of ['aiA', 'aiB', 'aiC']) if (S[k] !== 'off' && robots.length < 4) robots.push(new Robot(robots.length, makeAI(S[k])));
 }
 function setGame(name) { S.game = name; save(); game = GAMES[name]; game.init(); makeRobots(); if (Trainer.on) Trainer.startGen(); if (game !== Race) Trainer.on = false; }
-if (isTouch) { showHelp = false; document.querySelectorAll('.stick').forEach(s => s.style.display = 'block'); $('touchbar').style.display = 'flex'; }
+if (isTouch) { showHelp = false; document.querySelectorAll('.stick, .goo').forEach(s => s.style.display = 'block'); $('touchbar').style.display = 'flex'; }
 resize(); setGame(S.game in GAMES ? S.game : 'race'); buildSettings(); syncUI();
 
 const DT = 1/120; let acc = 0, last = performance.now();
