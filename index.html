@@ -276,9 +276,15 @@ function buildTrack(name) {
   }
   return { name, tw, per, pts, at, nearest, minSep };
 }
+const fits = t => t.minSep > t.tw * 1.25;
 function pickTrack() {
-  if (S.track !== 'auto' && LAYOUTS[S.track]) return buildTrack(S.track);
-  for (const name of [...LAYOUT_NAMES].reverse()) { const t = buildTrack(name); if (t.minSep > t.tw * 1.25) return t; }
+  // a chosen layout that would overlap itself on this floor falls back to the best one that fits, with a note
+  if (S.track !== 'auto' && LAYOUTS[S.track]) { const t = buildTrack(S.track); if (fits(t)) return t;
+    const f = pickAuto(); f.note = `${S.track} doesn't fit a ${AW.toFixed(1)} m floor — showing ${f.name}. Make "Projected width" bigger or the track narrower.`; return f; }
+  return pickAuto();
+}
+function pickAuto() {
+  for (const name of [...LAYOUT_NAMES].reverse()) { const t = buildTrack(name); if (fits(t)) return t; }
   return buildTrack('oval');
 }
 const Race = {
@@ -367,6 +373,7 @@ const Race = {
     // track name, small, in the corner
     ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `${Math.max(12, W2S(0.028))}px system-ui`; ctx.textAlign = 'right';
     ctx.fillText(`${t.name} · ${t.per.toFixed(1)} m lap`, CW - 12, CH - 12);
+    if (t.note) { ctx.fillStyle = '#fff3c4'; ctx.textAlign = 'center'; ctx.fillText(t.note, CW/2, CH - 12); }
   },
   hud() {
     return robots.map(r => { const s = this.pl(r.i);
