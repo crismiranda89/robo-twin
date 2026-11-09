@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Robo Twin</title>
+<style>
+  :root { --bg:#000; --fg:#e8e8e8; --panel:rgba(20,22,28,.92); --accent:#4cc2ff; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; overflow:hidden; }
+  #view { position:absolute; left:0; top:0; transform-origin:0 0; }
+  .panel { position:absolute; background:var(--panel); border:1px solid #333; border-radius:8px; padding:12px 14px; z-index:5; }
+  #settings { right:12px; top:12px; width:310px; max-height:calc(100% - 48px); overflow:auto; display:none; }
+  #help { left:12px; bottom:12px; display:none; max-width:420px; }
+  #budget { left:12px; top:12px; display:none; font-variant-numeric:tabular-nums; }
+  .panel h3 { margin:10px 0 6px; font-size:13px; color:var(--accent); text-transform:uppercase; letter-spacing:.05em; }
+  .row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .row label { flex:1; }
+  .row input[type=range] { width:120px; }
+  .row .v { width:56px; text-align:right; font-variant-numeric:tabular-nums; }
+  select, button { background:#222; color:var(--fg); border:1px solid #444; border-radius:4px; padding:2px 6px; }
+  .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #ff0; border-radius:50%; z-index:6; cursor:grab; display:none; }
+  kbd { background:#333; border-radius:3px; padding:0 4px; }
+  body { touch-action:none; -webkit-user-select:none; user-select:none; }
+  .stick { position:absolute; bottom:24px; width:140px; height:140px; border-radius:50%; border:2px solid rgba(255,255,255,.35); background:rgba(255,255,255,.06); z-index:7; display:none; touch-action:none; }
+  .stick .knob { position:absolute; left:50%; top:50%; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; background:currentColor; opacity:.8; }
+  #stick0 { left:24px; color:#ffcc00; } #stick1 { right:24px; color:#4cc2ff; }
+  #touchbar { position:absolute; top:8px; right:8px; z-index:7; display:none; gap:6px; }
+  #touchbar button { font-size:16px; padding:6px 10px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div class="corner" data-i="0"></div><div class="corner" data-i="1"></div>
+<div class="corner" data-i="2"></div><div class="corner" data-i="3"></div>
+
+<div class="stick" id="stick0"><div class="knob"></div></div>
+<div class="stick" id="stick1"><div class="knob"></div></div>
+<div id="touchbar"><button data-k="1">Race</button><button data-k="2">Ball</button><button data-k="r">Reset</button><button data-k="l">Lag</button><button data-k="p">⚙</button></div>
+<div id="budget" class="panel"></div>
+<div id="help" class="panel">
+  <b>Robo Twin</b> — digital twin of the attic track<br>
+  <kbd>H</kbd> help · <kbd>P</kbd> settings · <kbd>L</kbd> latency panel · <kbd>C</kbd> calibrate (drag yellow corners, grid + 1 m ruler)<br>
+  <kbd>F</kbd> fullscreen · <kbd>1</kbd> race · <kbd>2</kbd> ball game · <kbd>R</kbd> reset · <kbd>Space</kbd> pause<br>
+  Controllers: PS5 pad 1 → player 1, pad 2 → player 2 (press any button to wake).<br>
+  Keyboard: P1 <kbd>WASD</kbd> + <kbd>Q</kbd>/<kbd>E</kbd> rotate · P2 arrows + <kbd>,</kbd>/<kbd>.</kbd> rotate<br>
+  Grey ring = where the camera <i>thinks</i> the robot is (delayed + noisy).
+</div>
+<div id="settings" class="panel"></div>
+
+<script>
+"use strict";
+// ---------- settings (persisted per browser) ----------
+const DEFAULTS = {
+  arenaW: 1.9,            // projected image width on the floor, metres (measure it!)
+  players: 2,
+  // robot (RoverC Pro guesses — replace with measured values)
+  maxSpeed: 0.8, maxAccel: 2.0, maxTurn: 4.0, slip: 0.05,
+  // latency chain (ms)
+  btMs: 15, camFps: 60, captureMs: 25, detectMs: 5, decideMs: 1, camNoiseCm: 0.4, dropPct: 2,
+  // per player
+  p1Mode: 'kid', p1Cap: 40, p1Seat: 'bottom', p1Assist: 60,
+  p2Mode: 'adult', p2Cap: 100, p2Seat: 'bottom', p2Assist: 0,
+  game: 'race',
+  corners: null,
+};
+let S = Object.assign({}, DEFAULTS);
+try { Object.assign(S, JSON.parse(localStorage.getItem('robotwin') || '{}')); } catch (e) {}
+function save() { try { localStorage.setItem('robotwin', JSON.stringify(S)); } catch (e) {} }
+
+// ---------- canvas, scale ----------
+const cv = document.getElementById('view'), ctx = cv.getContext('2d');
+let CW, CH, PPM, AW, AH; // canvas px, pixels per metre, arena metres
+function resize() {
+  CW = cv.width = innerWidth || 1280; CH = cv.height = innerHeight || 720;
+  AW = S.arenaW; PPM = CW / AW; AH = CH / PPM;
+  if (!S.corners) S.corners = [[0,0],[CW,0],[CW,CH],[0,CH]];
+  applyKeystone();
+}
+addEventListener('resize', () => { S.corners = null; resize(); save(); if (game) setGame(S.game); });
+
+// keystone: map canvas rect onto the dragged quad with a CSS homography
+function homography(w, h, q) {
+  const src = [[0,0],[w,0],[w,h],[0,h]], A = [], B = [];
+  for (let i = 0; i < 4; i++) {
+    const [x,y] = src[i], [u,v] = q[i];
+    A.push([x,y,1,0,0,0,-u*x,-u*y]); B.push(u);
+    A.push([0,0,0,x,y,1,-v*x,-v*y]); B.push(v);
+  }
+  for (let c = 0; c < 8; c++) { // gaussian elimination
+    let p = c; for (let r = c+1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c],A[p]] = [A[p],A[c]]; [B[c],B[p]] = [B[p],B[c]];
+    for (let r = 0; r < 8; r++) if (r !== c) {
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
+      B[r] -= f * B[c];
+    }
+  }
+  const [a,b,c,d,e,f,g,hh] = B.map((v,i) => v / A[i][i]);
+  return [a,d,0,g, b,e,0,hh, 0,0,1,0, c,f,0,1];
+}
+function applyKeystone() {
+  cv.style.transform = 'matrix3d(' + homography(CW, CH, S.corners).join(',') + ')';
+  document.querySelectorAll('.corner').forEach(el => {
+    const [x,y] = S.corners[+el.dataset.i]; el.style.left = x+'px'; el.style.top = y+'px';
+  });
+}
+let dragging = null;
+document.querySelectorAll('.corner').forEach(el => el.addEventListener('pointerdown', e => { dragging = +el.dataset.i; el.setPointerCapture(e.pointerId); }));
+addEventListener('pointermove', e => { if (dragging !== null) { S.corners[dragging] = [e.clientX, e.clientY]; applyKeystone(); } });
+addEventListener('pointerup', () => { if (dragging !== null) { dragging = null; save(); } });
+
+const W2S = m => m * PPM;
+
+// ---------- helpers ----------
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); v = Math.random(); return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v); };
+const angDiff = (a,b) => Math.atan2(Math.sin(a-b), Math.cos(a-b));
+let now = 0; // sim time, seconds
+
+// ---------- robot model ----------
+const ROBOT_SIZE = 0.10, ROBOT_R = 0.065, ROBOT_M = 0.4;
+const COLORS = ['#ffcc00', '#4cc2ff', '#ff5ca8', '#7dff7a'];
+class Robot {
+  constructor(i) { this.i = i; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
+  reset() {
+    const g = game.start(this.i);
+    this.x = g.x; this.y = g.y; this.th = g.th;
+    this.vx = 0; this.vy = 0; this.w = 0;
+    this.cmdQ = []; this.hist = []; this.sensed = { x:this.x, y:this.y, th:this.th, t:0 };
+    this.lastCam = 0; this.boostUntil = 0; this.slowUntil = 0;
+  }
+  p(k) { return S['p' + (this.i+1) + k]; }
+  get speedLimit() {
+    let v = S.maxSpeed * this.p('Cap') / 100;
+    if (now < this.boostUntil) v *= 1.5;
+    return v;
+  }
+  // input -> body command (world-frame velocity + yaw rate), pushed through Bluetooth delay
+  command(inp) {
+    const vmax = this.speedLimit;
+    let vx, vy, w;
+    if (this.p('Mode') === 'kid') {
+      // "where I point": stick direction in the child's view, robot uses gyro to convert
+      const rot = { bottom:0, left:-Math.PI/2, top:Math.PI, right:Math.PI/2 }[this.p('Seat')];
+      const sx = inp.lx, sy = inp.ly, c = Math.cos(rot), s = Math.sin(rot);
+      vx = (sx*c - sy*s) * vmax; vy = (sx*s + sy*c) * vmax;
+      // auto-face direction of travel
+      const sp = Math.hypot(vx, vy);
+      w = sp > 0.05 ? clamp(angDiff(Math.atan2(vy, vx), this.th) * 6, -S.maxTurn, S.maxTurn) : 0;
+      // assist: steer back toward the track using the CAMERA pose (so latency matters)
+      const a = this.p('Assist') / 100, fix = a > 0 && game.correction ? game.correction(this.sensed) : null;
+      if (fix) { vx += fix.x * vmax * a; vy += fix.y * vmax * a;
+        const n = Math.hypot(vx, vy); if (n > vmax) { vx *= vmax/n; vy *= vmax/n; } }
+    } else {
+      // robot-relative: left stick forward/strafe, right stick rotate
+      const f = -inp.ly * vmax, st = inp.lx * vmax, c = Math.cos(this.th), s = Math.sin(this.th);
+      vx = f*c - st*s; vy = f*s + st*c; w = inp.rx * S.maxTurn;
+    }
+    this.cmdQ.push({ t: now, vx, vy, w });
+  }
+  step(dt) {
+    // apply the newest command that has survived the Bluetooth delay
+    let cmd = { vx:0, vy:0, w:0 };
+    while (this.cmdQ.length > 1 && this.cmdQ[1].t <= now - S.btMs/1000) this.cmdQ.shift();
+    if (this.cmdQ.length && this.cmdQ[0].t <= now - S.btMs/1000) cmd = this.cmdQ[0];
+    if (now < this.slowUntil) { cmd = { vx: cmd.vx*0.4, vy: cmd.vy*0.4, w: cmd.w + 6*Math.sin(now*9) }; }
+    // acceleration limit
+    const dvx = cmd.vx - this.vx, dvy = cmd.vy - this.vy, dv = Math.hypot(dvx, dvy), lim = S.maxAccel * dt;
+    const k = dv > lim ? lim / dv : 1;
+    this.vx += dvx * k; this.vy += dvy * k;
+    this.w += clamp(cmd.w - this.w, -S.maxTurn*8*dt, S.maxTurn*8*dt);
+    // wheel slip noise
+    const sl = S.slip * Math.hypot(this.vx, this.vy);
+    this.vx += gauss() * sl * dt * 10; this.vy += gauss() * sl * dt * 10;
+    this.x += this.vx * dt; this.y += this.vy * dt; this.th += this.w * dt;
+    this.hist.push({ t: now, x: this.x, y: this.y, th: this.th });
+    while (this.hist.length > 2 && this.hist[0].t < now - 1) this.hist.shift();
+    // camera: frames at camFps, each frame shows the world captureMs ago, result ready after detect+decide
+    if (now - this.lastCam >= 1 / S.camFps) {
+      this.lastCam = now;
+      if (Math.random() * 100 >= S.dropPct) {
+        const tSeen = now - (S.captureMs + S.detectMs + S.decideMs) / 1000;
+        let h = this.hist[0]; for (const e of this.hist) { if (e.t <= tSeen) h = e; else break; }
+        const n = S.camNoiseCm / 100;
+        this.sensed = { x: h.x + gauss()*n, y: h.y + gauss()*n, th: h.th, t: now };
+      }
+    }
+  }
+  draw() {
+    const s = this.sensed;
+    ctx.strokeStyle = '#888'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke();
+    ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th);
+    const h = W2S(ROBOT_SIZE) / 2;
+    if (now < this.boostUntil) { ctx.shadowColor = '#fff'; ctx.shadowBlur = 25; }
+    ctx.fillStyle = this.color; ctx.fillRect(-h, -h, 2*h, 2*h);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(h*0.9, 0); ctx.lineTo(-h*0.3, -h*0.5); ctx.lineTo(-h*0.3, h*0.5); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ---------- physics: circles vs circles, circles vs arena walls ----------
+function collide(a, b, e) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), md = a.r + b.r;
+  if (d >= md || d === 0) return;
+  const nx = dx/d, ny = dy/d, im = 1/a.m + 1/b.m, pen = md - d;
+  a.x -= nx*pen*(1/a.m)/im; a.y -= ny*pen*(1/a.m)/im;
+  b.x += nx*pen*(1/b.m)/im; b.y += ny*pen*(1/b.m)/im;
+  const rv = (b.vx - a.vx)*nx + (b.vy - a.vy)*ny; if (rv > 0) return;
+  const j = -(1+e)*rv/im;
+  a.vx -= j*nx/a.m; a.vy -= j*ny/a.m; b.vx += j*nx/b.m; b.vy += j*ny/b.m;
+}
+function walls(o, e) {
+  if (o.x < o.r) { o.x = o.r; o.vx = Math.abs(o.vx)*e; }
+  if (o.x > AW-o.r) { o.x = AW-o.r; o.vx = -Math.abs(o.vx)*e; }
+  if (o.y < o.r) { o.y = o.r; o.vy = Math.abs(o.vy)*e; }
+  if (o.y > AH-o.r) { o.y = AH-o.r; o.vy = -Math.abs(o.vy)*e; }
+}
+
+// ---------- games (plug-ins) ----------
+// each game: start(i) -> spawn pose, update(dt), draw(), hud() -> string, optional correction(pose) -> unit-ish vector
+function stadium() { // oval track that fits the arena
+  const m = 0.12, tw = 0.32, R = Math.min(AH - 2*m - tw, AW - 2*m - tw - 0.1) / 2, L = Math.max(0.1, AW - 2*m - tw - 2*R);
+  const cx = AW/2, cy = AH/2, per = 2*L + 2*Math.PI*R;
+  // centreline param s in [0,per): start at bottom-middle going right (counter-clockwise on screen? -> clockwise visually)
+  function at(s) {
+    s = ((s % per) + per) % per;
+    if (s < L/2) return { x: cx + s, y: cy + R };
+    s -= L/2; if (s < Math.PI*R) { const a = Math.PI/2 - s/R; return { x: cx + L/2 + R*Math.cos(a), y: cy + R*Math.sin(a) }; }
+    s -= Math.PI*R; if (s < L) return { x: cx + L/2 - s, y: cy - R };
+    s -= L; if (s < Math.PI*R) { const a = -Math.PI/2 - s/R; return { x: cx - L/2 + R*Math.cos(a), y: cy + R*Math.sin(a) }; }
+    s -= Math.PI*R; return { x: cx - L/2 + s, y: cy + R };
+  }
+  function nearest(p) { // returns {s, d, px, py}
+    let best = null;
+    const steps = 240; for (let i = 0; i < steps; i++) {
+      const s = i * per / steps, q = at(s), d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (!best || d < best.d) best = { s, d, px: q.x, py: q.y };
+    }
+    return best;
+  }
+  return { tw, R, L, cx, cy, per, at, nearest };
+}
+const Race = {
+  name: 'race',
+  init() { this.t = stadium(); this.stars = [0.2, 0.55, 0.85].map(f => ({ s: f*this.t.per, on: true, back: 0 }));
+    this.oil = { s: 0.4*this.t.per, on: true, back: 0 };
+    this.p = {}; this.start0 = now; },
+  start(i) { const q = this.t.at(-0.15 - i*0.0), off = (i ? -1 : 1) * 0.07; return { x: q.x, y: q.y + off, th: 0 }; },
+  pl(i) { return this.p[i] || (this.p[i] = { laps: 0, lastS: 0, half: false, lapStart: now, last: null, best: null, off: 0, wasOff: false }); },
+  correction(pose) {
+    const n = this.t.nearest(pose); if (n.d < this.t.tw * 0.3) return null;
+    const k = clamp((n.d - this.t.tw*0.3) / (this.t.tw*0.4), 0, 1);
+    return { x: (n.px - pose.x)/n.d * k, y: (n.py - pose.y)/n.d * k };
+  },
+  update() {
+    for (const r of robots) {
+      const st = this.pl(r.i), n = this.t.nearest(r), per = this.t.per;
+      if (n.s > per*0.4 && n.s < per*0.6) st.half = true;
+      if (st.half && st.lastS > per*0.85 && n.s < per*0.15) {
+        st.laps++; st.half = false; st.last = now - st.lapStart; st.lapStart = now;
+        if (!st.best || st.last < st.best) st.best = st.last;
+      }
+      st.lastS = n.s;
+      const off = n.d > this.t.tw/2; if (off && !st.wasOff) st.off++; st.wasOff = off;
+      for (const s of this.stars) {
+        if (!s.on) { if (now > s.back) s.on = true; continue; }
+        const q = this.t.at(s.s); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.08) { s.on = false; s.back = now + 4; r.boostUntil = now + 3; }
+      }
+      const o = this.oil; if (!o.on) { if (now > o.back) o.on = true; }
+      else { const q = this.t.at(o.s); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.07) { o.on = false; o.back = now + 6; r.slowUntil = now + 1.2; } }
+    }
+  },
+  draw() {
+    const t = this.t;
+    // track surface
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const path = () => { ctx.beginPath(); for (let i = 0; i <= 200; i++) { const q = t.at(i*t.per/200); ctx[i?'lineTo':'moveTo'](W2S(q.x), W2S(q.y)); } };
+    path(); ctx.strokeStyle = '#1e2a3a'; ctx.lineWidth = W2S(t.tw); ctx.stroke();
+    path(); ctx.strokeStyle = '#fff'; ctx.lineWidth = W2S(t.tw) + 6; ctx.globalCompositeOperation = 'destination-over'; ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.setLineDash([W2S(0.04), W2S(0.04)]); path(); ctx.strokeStyle = '#3a4a60'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+    // start line
+    const q = t.at(0); ctx.fillStyle = '#fff';
+    for (let k = 0; k < 8; k++) for (let j = 0; j < 2; j++) if ((k+j)%2) ctx.fillRect(W2S(q.x + j*0.02), W2S(q.y - t.tw/2 + k*t.tw/8), W2S(0.02), W2S(t.tw/8));
+    // stars + oil
+    for (const s of this.stars) if (s.on) { const p = t.at(s.s); star(W2S(p.x), W2S(p.y), W2S(0.045), '#ffe24a'); }
+    if (this.oil.on) { const p = t.at(this.oil.s); ctx.fillStyle = '#5b2bd6'; ctx.beginPath(); ctx.ellipse(W2S(p.x), W2S(p.y), W2S(0.06), W2S(0.04), 0.4, 0, 7); ctx.fill(); }
+  },
+  hud() {
+    return robots.map(r => { const s = this.pl(r.i);
+      return `<span style="color:${r.color}">P${r.i+1}</span> laps ${s.laps} · last ${s.last ? s.last.toFixed(1)+'s' : '–'} · best ${s.best ? s.best.toFixed(1)+'s' : '–'} · off-track ${s.off}`; }).join('<br>');
+  },
+};
+const BallGame = {
+  name: 'ball',
+  init() { this.score = [0,0]; this.ball = { x: AW/2, y: AH/2, vx: 0, vy: 0, r: 0.035, m: 0.05 }; this.pause = 0; this.gh = Math.min(0.45, AH*0.4); },
+  start(i) { return { x: i ? AW*0.75 : AW*0.25, y: AH/2, th: i ? Math.PI : 0 }; },
+  correction: null,
+  update(dt) {
+    const b = this.ball;
+    if (now < this.pause) return;
+    const sp = Math.hypot(b.vx, b.vy), dec = 0.6 * dt; // rolling friction
+    if (sp > dec) { b.vx -= b.vx/sp*dec; b.vy -= b.vy/sp*dec; } else { b.vx = b.vy = 0; }
+    b.x += b.vx*dt; b.y += b.vy*dt;
+    for (const r of robots) collide(r, b, 0.6);
+    const inMouth = Math.abs(b.y - AH/2) < this.gh/2;
+    if (inMouth && b.x < b.r) return this.goal(1);
+    if (inMouth && b.x > AW - b.r) return this.goal(0);
+    walls(b, 0.7);
+  },
+  goal(p) { this.score[p]++; this.pause = now + 1.2; Object.assign(this.ball, { x: AW/2, y: AH/2, vx: 0, vy: 0 }); this.flash = { p, until: now + 1.2 }; },
+  draw() {
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, CW-4, CH-4);
+    ctx.beginPath(); ctx.moveTo(CW/2, 0); ctx.lineTo(CW/2, CH); ctx.stroke();
+    ctx.beginPath(); ctx.arc(CW/2, CH/2, W2S(0.18), 0, 7); ctx.stroke();
+    const gy = W2S(AH/2 - this.gh/2), gh = W2S(this.gh), gd = W2S(0.08);
+    ctx.fillStyle = COLORS[1]; ctx.fillRect(0, gy, gd, gh);       // P2 defends left? left goal scores for P2
+    ctx.fillStyle = COLORS[0]; ctx.fillRect(CW-gd, gy, gd, gh);    // right goal scores for P1
+    const b = this.ball; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(W2S(b.x), W2S(b.y), W2S(b.r), 0, 7); ctx.fill();
+    if (this.flash && now < this.flash.until) { ctx.fillStyle = COLORS[this.flash.p]; ctx.font = `bold ${W2S(0.2)}px system-ui`; ctx.textAlign = 'center'; ctx.fillText('GOAL!', CW/2, CH/2 - W2S(0.25)); }
+  },
+  hud() { return `<span style="color:${COLORS[0]}">P1</span> ${this.score[0]} : ${this.score[1]} <span style="color:${COLORS[1]}">P2</span> — P1 scores right, P2 scores left`; },
+};
+const GAMES = { race: Race, ball: BallGame };
+function star(x, y, r, c) {
+  ctx.fillStyle = c; ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI/2 + i*Math.PI/5, rr = i%2 ? r*0.45 : r; ctx.lineTo(x + rr*Math.cos(a), y + rr*Math.sin(a)); }
+  ctx.fill();
+}
+
+// ---------- input ----------
+const keys = new Set();
+addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); hotkey(e); });
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+const KB = [
+  { u:'w', d:'s', l:'a', r:'d', rl:'q', rr:'e' },
+  { u:'arrowup', d:'arrowdown', l:'arrowleft', r:'arrowright', rl:',', rr:'.' },
+];
+const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v)*0.12) / 0.88;
+function readInput(i) {
+  const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean);
+  const gp = pads[i];
+  let lx = 0, ly = 0, rx = 0;
+  if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); }
+  const ts = touch[i];
+  if (ts) {
+    // kid mode: stick = direction to go. robot-relative: up/down = forward/back, left/right = turn
+    if (S['p'+(i+1)+'Mode'] === 'kid') { lx += ts.x; ly += ts.y; } else { ly += ts.y; rx += ts.x; }
+  }
+  const k = KB[i];
+  if (k) {
+    if (keys.has(k.l)) lx -= 1; if (keys.has(k.r)) lx += 1;
+    if (keys.has(k.u)) ly -= 1; if (keys.has(k.d)) ly += 1;
+    if (keys.has(k.rl)) rx -= 1; if (keys.has(k.rr)) rx += 1;
+  }
+  const m = Math.hypot(lx, ly); if (m > 1) { lx /= m; ly /= m; }
+  return { lx, ly, rx: clamp(rx, -1, 1), pad: !!gp };
+}
+
+// ---------- touch joysticks (left = P1, right = P2) ----------
+const touch = [null, null];
+const isTouch = matchMedia('(pointer:coarse)').matches || /[?&]touch/.test(location.search);
+document.querySelectorAll('.stick').forEach((el, i) => {
+  const knob = el.querySelector('.knob'); let id = null;
+  const move = e => {
+    const b = el.getBoundingClientRect(), R = b.width / 2;
+    let x = (e.clientX - b.left - R) / R, y = (e.clientY - b.top - R) / R;
+    const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
+    touch[i] = { x: dz(x), y: dz(y) };
+    knob.style.transform = `translate(${x*R*0.7}px,${y*R*0.7}px)`;
+  };
+  el.addEventListener('pointerdown', e => { id = e.pointerId; el.setPointerCapture(id); move(e); e.preventDefault(); });
+  el.addEventListener('pointermove', e => { if (e.pointerId === id) move(e); });
+  const end = e => { if (e.pointerId !== id) return; id = null; touch[i] = null; knob.style.transform = ''; };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+});
+document.querySelectorAll('#touchbar button').forEach(b => b.addEventListener('click', () => hotkey({ key: b.dataset.k, target: b, preventDefault(){} })));
+
+// ---------- UI ----------
+const $ = id => document.getElementById(id);
+let showHelp = true, showSettings = false, showBudget = false, calib = false, paused = false;
+function hotkey(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.target.tagName === 'BUTTON' && !e.target.closest('#touchbar')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'h') showHelp = !showHelp;
+  else if (k === 'p') showSettings = !showSettings;
+  else if (k === 'l') showBudget = !showBudget;
+  else if (k === 'c') calib = !calib;
+  else if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+  else if (k === '1') setGame('race');
+  else if (k === '2') setGame('ball');
+  else if (k === 'r') setGame(S.game);
+  else if (k === ' ') { paused = !paused; e.preventDefault(); }
+  else return;
+  syncUI();
+}
+function syncUI() {
+  $('help').style.display = showHelp ? 'block' : 'none';
+  $('settings').style.display = showSettings ? 'block' : 'none';
+  $('budget').style.display = showBudget ? 'block' : 'none';
+  document.querySelectorAll('.corner').forEach(c => c.style.display = calib ? 'block' : 'none');
+}
+const SLIDERS = [
+  ['Floor', [['arenaW', 'Projected width (m)', 0.5, 4, 0.01]]],
+  ['Robot (RoverC guesses)', [['maxSpeed','Top speed (m/s)',0.1,2,0.05], ['maxAccel','Accel (m/s²)',0.2,8,0.1], ['maxTurn','Turn rate (rad/s)',0.5,10,0.1], ['slip','Wheel slip',0,0.5,0.01]]],
+  ['Latency chain', [['btMs','Bluetooth (ms)',0,300,1], ['camFps','Camera fps',5,120,1], ['captureMs','Capture (ms)',0,2000,1], ['detectMs','Detection (ms)',0,100,1], ['decideMs','Decision (ms)',0,50,1], ['camNoiseCm','Camera noise (cm)',0,5,0.1], ['dropPct','Dropped frames (%)',0,50,1]]],
+  ['Player 1', [['p1Cap','Speed cap (%)',10,100,5], ['p1Assist','Track assist (%)',0,100,5]]],
+  ['Player 2', [['p2Cap','Speed cap (%)',10,100,5], ['p2Assist','Track assist (%)',0,100,5]]],
+];
+function buildSettings() {
+  let h = '<b>Settings</b> <button id="defaults">reset all</button>';
+  for (const [title, list] of SLIDERS) {
+    h += `<h3>${title}</h3>`;
+    if (title.startsWith('Player')) {
+      const p = title.endsWith('1') ? 'p1' : 'p2';
+      h += `<div class="row"><label>Mode</label><select data-k="${p}Mode"><option value="kid">kid: where I point</option><option value="adult">robot-relative</option></select></div>`;
+      h += `<div class="row"><label>Sits at</label><select data-k="${p}Seat"><option>bottom</option><option>top</option><option>left</option><option>right</option></select></div>`;
+    }
+    if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`;
+    for (const [k, label, mn, mx, st] of list)
+      h += `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
+  }
+  h += '<p style="color:#999;font-size:12px">Tapo RTSP ≈ capture 1500 ms. USB 60 fps ≈ 25 ms. Try both in the race with assist on.</p>';
+  $('settings').innerHTML = h;
+  $('settings').querySelectorAll('[data-k]').forEach(el => {
+    const k = el.dataset.k; el.value = S[k];
+    const show = () => { const v = $('v_' + k); if (v) v.textContent = S[k]; };
+    show();
+    el.addEventListener('input', () => {
+      S[k] = el.type === 'range' || el.dataset.num ? +el.value : el.value; show(); save();
+      if (k === 'arenaW') { resize(); setGame(S.game); }
+      if (k === 'players') makeRobots();
+    });
+  });
+  $('defaults').onclick = () => { S = Object.assign({}, DEFAULTS); save(); resize(); buildSettings(); setGame(S.game); };
+}
+function budgetHTML() {
+  const frame = 1000 / S.camFps;
+  const eyeToMotor = frame/2 + S.captureMs + S.detectMs + S.decideMs + S.btMs;
+  const col = eyeToMotor < 80 ? '#7dff7a' : eyeToMotor < 200 ? '#ffcc00' : '#ff5c5c';
+  const errs = robots.map(r => `P${r.i+1} camera error ${(Math.hypot(r.x - r.sensed.x, r.y - r.sensed.y)*100).toFixed(1)} cm`).join('<br>');
+  return `<b>Eye → motor budget</b><br>
+    frame wait (avg) ${frame/2|0} ms<br>capture ${S.captureMs} ms<br>detection ${S.detectMs} ms<br>decision ${S.decideMs} ms<br>Bluetooth ${S.btMs} ms<br>
+    <b style="color:${col}">total ≈ ${eyeToMotor|0} ms</b> (target &lt; 80)<br><br>${errs}`;
+}
+
+// ---------- calibration overlay ----------
+function drawCalib() {
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  for (let x = 0; x <= AW; x += 0.1) { ctx.beginPath(); ctx.moveTo(W2S(x), 0); ctx.lineTo(W2S(x), CH); ctx.stroke(); }
+  for (let y = 0; y <= AH; y += 0.1) { ctx.beginPath(); ctx.moveTo(0, W2S(y)); ctx.lineTo(CW, W2S(y)); ctx.stroke(); }
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(1, 1, CW-2, CH-2);
+  // 1 m ruler
+  const x0 = W2S(0.1), y0 = CH/2;
+  ctx.strokeStyle = '#ff0'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + W2S(1), y0); ctx.stroke();
+  for (let i = 0; i <= 10; i++) { ctx.beginPath(); ctx.moveTo(x0 + W2S(i/10), y0 - (i%5 ? 8 : 18)); ctx.lineTo(x0 + W2S(i/10), y0 + (i%5 ? 8 : 18)); ctx.stroke(); }
+  ctx.fillStyle = '#ff0'; ctx.font = '22px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText(`1 m ruler — measure it on the floor. If it isn't 1 m, fix "Projected width". Now ${AW.toFixed(2)} × ${AH.toFixed(2)} m`, x0, y0 - 30);
+  ctx.fillText('Drag the yellow circles onto the corners of a rectangle on the floor to remove keystone distortion.', x0, y0 + 50);
+}
+
+// ---------- main ----------
+let game, robots = [];
+function makeRobots() { robots = []; for (let i = 0; i < S.players; i++) robots.push(new Robot(i)); }
+function setGame(name) { S.game = name; save(); game = GAMES[name]; game.init(); makeRobots(); }
+if (isTouch) { showHelp = false; document.querySelectorAll('.stick').forEach(s => s.style.display = 'block'); $('touchbar').style.display = 'flex'; }
+resize(); setGame(S.game in GAMES ? S.game : 'race'); buildSettings(); syncUI();
+
+const DT = 1/120; let acc = 0, last = performance.now();
+function frame(t) {
+  acc += Math.min(0.1, (t - last) / 1000); last = t;
+  while (acc >= DT) {
+    acc -= DT;
+    if (paused || calib) continue;
+    now += DT;
+    robots.forEach(r => r.command(readInput(r.i)));
+    robots.forEach(r => r.step(DT));
+    for (let i = 0; i < robots.length; i++) for (let j = i+1; j < robots.length; j++) collide(robots[i], robots[j], 0.3);
+    robots.forEach(r => walls(r, 0));
+    game.update(DT);
+  }
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH);
+  if (calib) drawCalib();
+  else {
+    game.draw(); robots.forEach(r => r.draw());
+    ctx.fillStyle = '#ccc'; ctx.font = `${Math.max(14, W2S(0.035))}px system-ui`; ctx.textAlign = 'center';
+    if (paused) ctx.fillText('PAUSED', CW/2, 40);
+  }
+  if (showBudget) $('budget').innerHTML = budgetHTML() + '<hr>' + game.hud();
+  else $('budget').innerHTML = '';
+  $('budget').style.display = (showBudget || !calib) ? 'block' : 'none';
+  if (!showBudget && !calib) $('budget').innerHTML = game.hud();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+addEventListener('gamepadconnected', e => console.log('pad', e.gamepad.id));
+</script>
+</body>
+</html>
