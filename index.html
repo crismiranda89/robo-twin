@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Robo Twin</title>
 <style>
-  :root { --bg:#000; --fg:#e8e8e8; --panel:rgba(20,22,28,.92); --accent:#4cc2ff; }
+  :root { --bg:#f6f4ef; --fg:#22252b; --panel:rgba(255,255,255,.94); --accent:#1a73c9; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; overflow:hidden; }
   #view { position:absolute; left:0; top:0; transform-origin:0 0; }
-  .panel { position:absolute; background:var(--panel); border:1px solid #333; border-radius:8px; padding:12px 14px; z-index:5; }
+  .panel { position:absolute; background:var(--panel); border:1px solid #d9d5cc; box-shadow:0 2px 10px rgba(0,0,0,.08); border-radius:10px; padding:12px 14px; z-index:5; }
   #settings { right:12px; top:12px; width:310px; max-height:calc(100% - 48px); overflow:auto; display:none; }
   #help { left:12px; bottom:12px; display:none; max-width:420px; }
   #budget { left:12px; top:12px; display:none; font-variant-numeric:tabular-nums; }
@@ -17,13 +17,13 @@
   .row label { flex:1; }
   .row input[type=range] { width:120px; }
   .row .v { width:56px; text-align:right; font-variant-numeric:tabular-nums; }
-  select, button { background:#222; color:var(--fg); border:1px solid #444; border-radius:4px; padding:2px 6px; }
-  .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #ff0; border-radius:50%; z-index:6; cursor:grab; display:none; }
-  kbd { background:#333; border-radius:3px; padding:0 4px; }
+  select, button { background:#fff; color:var(--fg); border:1px solid #c9c4b8; border-radius:4px; padding:2px 6px; }
+  .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #e8a400; border-radius:50%; z-index:6; cursor:grab; display:none; }
+  kbd { background:#ebe7de; border-radius:3px; padding:0 4px; }
   body { touch-action:none; -webkit-user-select:none; user-select:none; }
-  .stick { position:absolute; bottom:24px; width:140px; height:140px; border-radius:50%; border:2px solid rgba(255,255,255,.35); background:rgba(255,255,255,.06); z-index:7; display:none; touch-action:none; }
+  .stick { position:absolute; bottom:24px; width:140px; height:140px; border-radius:50%; border:2px solid rgba(0,0,0,.25); background:rgba(0,0,0,.04); z-index:7; display:none; touch-action:none; }
   .stick .knob { position:absolute; left:50%; top:50%; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; background:currentColor; opacity:.8; }
-  #stick0 { left:24px; color:#ffcc00; } #stick1 { right:24px; color:#4cc2ff; }
+  #stick0 { left:24px; color:#f2a900; } #stick1 { right:24px; color:#1a8fe0; }
   #touchbar { position:absolute; top:8px; right:8px; z-index:7; display:none; gap:6px; }
   #touchbar button { font-size:16px; padding:6px 10px; }
 </style>
@@ -42,7 +42,8 @@
   <kbd>H</kbd> help · <kbd>P</kbd> settings · <kbd>L</kbd> latency panel · <kbd>C</kbd> calibrate (drag yellow corners, grid + 1 m ruler)<br>
   <kbd>F</kbd> fullscreen · <kbd>1</kbd> race · <kbd>2</kbd> ball game · <kbd>R</kbd> reset · <kbd>Space</kbd> pause<br>
   Controllers: PS5 pad 1 → player 1, pad 2 → player 2 (press any button to wake).<br>
-  Keyboard: P1 <kbd>WASD</kbd> + <kbd>Q</kbd>/<kbd>E</kbd> rotate · P2 arrows + <kbd>,</kbd>/<kbd>.</kbd> rotate<br>
+  Keyboard: P1 <kbd>WASD</kbd> · P2 arrows. Kid mode = go where I point; tank mode = up/down drive, left/right turn.<br>
+  <kbd>T</kbd> next track layout (auto picks the most complex one that fits the floor).<br>
   Grey ring = where the camera <i>thinks</i> the robot is (delayed + noisy).
 </div>
 <div id="settings" class="panel"></div>
@@ -53,8 +54,9 @@
 const DEFAULTS = {
   arenaW: 1.9,            // projected image width on the floor, metres (measure it!)
   players: 2,
-  // robot (RoverC Pro guesses — replace with measured values)
-  maxSpeed: 0.8, maxAccel: 2.0, maxTurn: 4.0, slip: 0.05,
+  track: 'auto', trackW: 0.28,
+  // robot (Keyestudio KS0426 micro:bit car guesses — 2 driven wheels, turns on the spot; replace with measured values)
+  maxSpeed: 0.45, maxAccel: 1.5, maxTurn: 5.0, slip: 0.05,
   // latency chain (ms)
   btMs: 15, camFps: 60, captureMs: 25, detectMs: 5, decideMs: 1, camNoiseCm: 0.4, dropPct: 2,
   // per player
@@ -64,8 +66,8 @@ const DEFAULTS = {
   corners: null,
 };
 let S = Object.assign({}, DEFAULTS);
-try { Object.assign(S, JSON.parse(localStorage.getItem('robotwin') || '{}')); } catch (e) {}
-function save() { try { localStorage.setItem('robotwin', JSON.stringify(S)); } catch (e) {} }
+try { Object.assign(S, JSON.parse(localStorage.getItem('robotwin2') || '{}')); } catch (e) {}
+function save() { try { localStorage.setItem('robotwin2', JSON.stringify(S)); } catch (e) {} }
 
 // ---------- canvas, scale ----------
 const cv = document.getElementById('view'), ctx = cv.getContext('2d');
@@ -118,8 +120,8 @@ const angDiff = (a,b) => Math.atan2(Math.sin(a-b), Math.cos(a-b));
 let now = 0; // sim time, seconds
 
 // ---------- robot model ----------
-const ROBOT_SIZE = 0.10, ROBOT_R = 0.065, ROBOT_M = 0.4;
-const COLORS = ['#ffcc00', '#4cc2ff', '#ff5ca8', '#7dff7a'];
+const ROBOT_SIZE = 0.12, ROBOT_R = 0.07, ROBOT_M = 0.35;
+const COLORS = ['#ffc21a', '#2fa8ff', '#ff5ca8', '#5fe35c'];
 class Robot {
   constructor(i) { this.i = i; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
   reset() {
@@ -135,36 +137,38 @@ class Robot {
     if (now < this.boostUntil) v *= 1.5;
     return v;
   }
-  // input -> body command (world-frame velocity + yaw rate), pushed through Bluetooth delay
+  // input -> body command (forward speed + yaw rate: 2 driven wheels, no strafing), pushed through Bluetooth delay
   command(inp) {
     const vmax = this.speedLimit;
-    let vx, vy, w;
+    let v, w;
     if (this.p('Mode') === 'kid') {
-      // "where I point": stick direction in the child's view, robot uses gyro to convert
+      // "where I point": stick direction in the child's view. The car turns on the spot to face it, then drives.
       const rot = { bottom:0, left:-Math.PI/2, top:Math.PI, right:Math.PI/2 }[this.p('Seat')];
       const sx = inp.lx, sy = inp.ly, c = Math.cos(rot), s = Math.sin(rot);
-      vx = (sx*c - sy*s) * vmax; vy = (sx*s + sy*c) * vmax;
-      // auto-face direction of travel
-      const sp = Math.hypot(vx, vy);
-      w = sp > 0.05 ? clamp(angDiff(Math.atan2(vy, vx), this.th) * 6, -S.maxTurn, S.maxTurn) : 0;
+      let dx = (sx*c - sy*s) * vmax, dy = (sx*s + sy*c) * vmax;
       // assist: steer back toward the track using the CAMERA pose (so latency matters)
       const a = this.p('Assist') / 100, fix = a > 0 && game.correction ? game.correction(this.sensed) : null;
-      if (fix) { vx += fix.x * vmax * a; vy += fix.y * vmax * a;
-        const n = Math.hypot(vx, vy); if (n > vmax) { vx *= vmax/n; vy *= vmax/n; } }
+      if (fix && Math.hypot(dx, dy) > 0.02) { dx += fix.x * vmax * a; dy += fix.y * vmax * a; }
+      const sp = Math.min(vmax, Math.hypot(dx, dy));
+      if (sp > 0.03) {
+        const err = angDiff(Math.atan2(dy, dx), this.sensed.th);
+        w = clamp(err * 7, -S.maxTurn, S.maxTurn);
+        v = sp * Math.max(0, Math.cos(err)) ** 3;   // big error -> mostly turn in place
+      } else { v = 0; w = 0; }
     } else {
-      // robot-relative: left stick forward/strafe, right stick rotate
-      const f = -inp.ly * vmax, st = inp.lx * vmax, c = Math.cos(this.th), s = Math.sin(this.th);
-      vx = f*c - st*s; vy = f*s + st*c; w = inp.rx * S.maxTurn;
+      // tank / arcade: up-down = forward-back, left-right (or right stick) = turn
+      v = -inp.ly * vmax; w = (inp.rx || inp.lx) * S.maxTurn;
     }
-    this.cmdQ.push({ t: now, vx, vy, w });
+    this.cmdQ.push({ t: now, v, w });
   }
   step(dt) {
     // apply the newest command that has survived the Bluetooth delay
-    let cmd = { vx:0, vy:0, w:0 };
+    let cmd = { v:0, w:0 };
     while (this.cmdQ.length > 1 && this.cmdQ[1].t <= now - S.btMs/1000) this.cmdQ.shift();
     if (this.cmdQ.length && this.cmdQ[0].t <= now - S.btMs/1000) cmd = this.cmdQ[0];
-    if (now < this.slowUntil) { cmd = { vx: cmd.vx*0.4, vy: cmd.vy*0.4, w: cmd.w + 6*Math.sin(now*9) }; }
-    // acceleration limit
+    if (now < this.slowUntil) { cmd = { v: cmd.v*0.4, w: cmd.w + 6*Math.sin(now*9) }; }
+    // the wheels push along the heading; side velocity (from knocks) bleeds away through the same grip limit
+    cmd = { vx: cmd.v * Math.cos(this.th), vy: cmd.v * Math.sin(this.th), w: cmd.w };
     const dvx = cmd.vx - this.vx, dvy = cmd.vy - this.vy, dv = Math.hypot(dvx, dvy), lim = S.maxAccel * dt;
     const k = dv > lim ? lim / dv : 1;
     this.vx += dvx * k; this.vy += dvy * k;
@@ -188,14 +192,18 @@ class Robot {
   }
   draw() {
     const s = this.sensed;
-    ctx.strokeStyle = '#888'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(150,150,150,.9)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke(); ctx.setLineDash([]);
     ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th);
     const h = W2S(ROBOT_SIZE) / 2;
-    if (now < this.boostUntil) { ctx.shadowColor = '#fff'; ctx.shadowBlur = 25; }
-    ctx.fillStyle = this.color; ctx.fillRect(-h, -h, 2*h, 2*h);
+    if (now < this.boostUntil) { ctx.shadowColor = '#fff7b0'; ctx.shadowBlur = 30; }
+    // wheels (2 driven, one each side)
+    ctx.fillStyle = '#111'; ctx.fillRect(-h*0.55, -h*1.05, h*0.9, h*0.32); ctx.fillRect(-h*0.55, h*0.73, h*0.9, h*0.32);
+    // round body like the micro:bit car
+    ctx.fillStyle = this.color; ctx.strokeStyle = '#1b1d22'; ctx.lineWidth = Math.max(2, h*0.12);
+    ctx.beginPath(); ctx.arc(0, 0, h*0.85, 0, 7); ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(h*0.9, 0); ctx.lineTo(-h*0.3, -h*0.5); ctx.lineTo(-h*0.3, h*0.5); ctx.fill();
+    ctx.fillStyle = '#1b1d22'; ctx.beginPath(); ctx.moveTo(h*0.75, 0); ctx.lineTo(-h*0.15, -h*0.42); ctx.lineTo(-h*0.15, h*0.42); ctx.fill();
     ctx.restore();
   }
 }
@@ -220,34 +228,69 @@ function walls(o, e) {
 
 // ---------- games (plug-ins) ----------
 // each game: start(i) -> spawn pose, update(dt), draw(), hud() -> string, optional correction(pose) -> unit-ish vector
-function stadium() { // oval track that fits the arena
-  const m = 0.12, tw = 0.32, R = Math.min(AH - 2*m - tw, AW - 2*m - tw - 0.1) / 2, L = Math.max(0.1, AW - 2*m - tw - 2*R);
-  const cx = AW/2, cy = AH/2, per = 2*L + 2*Math.PI*R;
-  // centreline param s in [0,per): start at bottom-middle going right (counter-clockwise on screen? -> clockwise visually)
+// Track layouts: closed loops of control points in a unit box (x right, y down), smoothed with Catmull-Rom.
+// The first segment is the start straight. Listed simplest -> most complex.
+const LAYOUTS = {
+  oval:     [[0.25,0.90],[0.75,0.90],[0.93,0.50],[0.75,0.10],[0.25,0.10],[0.07,0.50]],
+  circuit:  [[0.22,0.90],[0.55,0.91],[0.85,0.87],[0.94,0.60],[0.88,0.25],[0.75,0.10],[0.58,0.12],[0.50,0.30],[0.45,0.52],[0.33,0.50],
+             [0.28,0.28],[0.20,0.10],[0.08,0.25],[0.06,0.65]],
+  grandprix:[[0.18,0.92],[0.48,0.93],[0.72,0.90],[0.90,0.84],[0.94,0.66],[0.82,0.55],[0.66,0.62],[0.54,0.72],[0.40,0.66],[0.42,0.48],
+             [0.58,0.38],[0.78,0.36],[0.92,0.26],[0.86,0.09],[0.62,0.08],[0.42,0.14],[0.26,0.08],[0.09,0.14],[0.06,0.40],[0.18,0.56],
+             [0.12,0.74],[0.08,0.86]],
+};
+const LAYOUT_NAMES = Object.keys(LAYOUTS);
+function buildTrack(name) {
+  const tw = S.trackW, m = 0.06 + tw/2, P = LAYOUTS[name].map(([u,v]) => [m + u*(AW-2*m), m + v*(AH-2*m)]), n = P.length;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = P[(i-1+n)%n], p1 = P[i], p2 = P[(i+1)%n], p3 = P[(i+2)%n];
+    for (let k = 0; k < 40; k++) {
+      const t = k/40, t2 = t*t, t3 = t2*t;
+      const f = (a,b,c,d) => 0.5*((2*b) + (-a+c)*t + (2*a-5*b+4*c-d)*t2 + (-a+3*b-3*c+d)*t3);
+      pts.push({ x: f(p0[0],p1[0],p2[0],p3[0]), y: f(p0[1],p1[1],p2[1],p3[1]) });
+    }
+  }
+  let s = 0;
+  pts.forEach((p, i) => { if (i) s += Math.hypot(p.x - pts[i-1].x, p.y - pts[i-1].y); p.s = s; });
+  const per = s + Math.hypot(pts[0].x - pts.at(-1).x, pts[0].y - pts.at(-1).y), N = pts.length;
+  pts.forEach((p, i) => { const q = pts[(i+1)%N], o = pts[(i-1+N)%N];
+    p.a = Math.atan2(q.y - p.y, q.x - p.x);
+    p.c = angDiff(Math.atan2(q.y - p.y, q.x - p.x), Math.atan2(p.y - o.y, p.x - o.x)) / Math.max(1e-6, Math.hypot(q.x - o.x, q.y - o.y) / 2); });
   function at(s) {
     s = ((s % per) + per) % per;
-    if (s < L/2) return { x: cx + s, y: cy + R };
-    s -= L/2; if (s < Math.PI*R) { const a = Math.PI/2 - s/R; return { x: cx + L/2 + R*Math.cos(a), y: cy + R*Math.sin(a) }; }
-    s -= Math.PI*R; if (s < L) return { x: cx + L/2 - s, y: cy - R };
-    s -= L; if (s < Math.PI*R) { const a = -Math.PI/2 - s/R; return { x: cx - L/2 + R*Math.cos(a), y: cy + R*Math.sin(a) }; }
-    s -= Math.PI*R; return { x: cx - L/2 + s, y: cy + R };
+    let lo = 0, hi = N - 1; while (lo < hi) { const md = (lo + hi + 1) >> 1; if (pts[md].s <= s) lo = md; else hi = md - 1; }
+    const p = pts[lo], q = pts[(lo+1)%N], segLen = (q.s || per) - p.s, f = segLen > 0 ? (s - p.s) / segLen : 0;
+    return { x: p.x + (q.x - p.x)*f, y: p.y + (q.y - p.y)*f, a: p.a };
   }
-  function nearest(p) { // returns {s, d, px, py}
+  function nearest(p) { // {s, d, px, py}
     let best = null;
-    const steps = 240; for (let i = 0; i < steps; i++) {
-      const s = i * per / steps, q = at(s), d = Math.hypot(p.x - q.x, p.y - q.y);
-      if (!best || d < best.d) best = { s, d, px: q.x, py: q.y };
-    }
+    for (const q of pts) { const d = Math.hypot(p.x - q.x, p.y - q.y); if (!best || d < best.d) best = { s: q.s, d, px: q.x, py: q.y }; }
     return best;
   }
-  return { tw, R, L, cx, cy, per, at, nearest };
+  // smallest gap between two parts of the loop that are far apart along the track -> does it overlap itself?
+  let minSep = Infinity;
+  for (let i = 0; i < N; i += 3) for (let j = i + 3; j < N; j += 3) {
+    const ds = Math.abs(pts[i].s - pts[j].s), along = Math.min(ds, per - ds);
+    if (along < tw * 2.5) continue;
+    minSep = Math.min(minSep, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y));
+  }
+  return { name, tw, per, pts, at, nearest, minSep };
+}
+function pickTrack() {
+  if (S.track !== 'auto' && LAYOUTS[S.track]) return buildTrack(S.track);
+  for (const name of [...LAYOUT_NAMES].reverse()) { const t = buildTrack(name); if (t.minSep > t.tw * 1.25) return t; }
+  return buildTrack('oval');
 }
 const Race = {
   name: 'race',
-  init() { this.t = stadium(); this.stars = [0.2, 0.55, 0.85].map(f => ({ s: f*this.t.per, on: true, back: 0 }));
-    this.oil = { s: 0.4*this.t.per, on: true, back: 0 };
-    this.p = {}; this.start0 = now; },
-  start(i) { const q = this.t.at(-0.15 - i*0.0), off = (i ? -1 : 1) * 0.07; return { x: q.x, y: q.y + off, th: 0 }; },
+  init() { this.t = pickTrack(); const per = this.t.per, nStars = Math.max(3, Math.round(per / 1.2));
+    this.stars = Array.from({ length: nStars }, (_, i) => ({ s: (0.12 + i / nStars) * per, on: true, back: 0, side: (i % 3 - 1) * 0.25 }));
+    const nOil = Math.max(1, Math.round(per / 2.5));
+    this.oils = Array.from({ length: nOil }, (_, i) => ({ s: (0.38 + i / nOil) * per, on: true, back: 0, side: i % 2 ? 0.2 : -0.2 }));
+    this.p = {}; this.start0 = now; this.s0 = Math.min(0.9, per * 0.08); },
+  start(i) { const q = this.t.at(this.s0 - 0.18 - i*0.16), off = (i % 2 ? -1 : 1) * this.t.tw * 0.22, a = q.a;
+    return { x: q.x - Math.sin(a)*off, y: q.y + Math.cos(a)*off, th: a }; },
+  item(o) { const q = this.t.at(o.s), off = o.side * this.t.tw; return { x: q.x - Math.sin(q.a)*off, y: q.y + Math.cos(q.a)*off, a: q.a }; },
   pl(i) { return this.p[i] || (this.p[i] = { laps: 0, lastS: 0, half: false, lapStart: now, last: null, best: null, off: 0, wasOff: false }); },
   correction(pose) {
     const n = this.t.nearest(pose); if (n.d < this.t.tw * 0.3) return null;
@@ -256,7 +299,7 @@ const Race = {
   },
   update() {
     for (const r of robots) {
-      const st = this.pl(r.i), n = this.t.nearest(r), per = this.t.per;
+      const st = this.pl(r.i), n0 = this.t.nearest(r), per = this.t.per, n = { ...n0, s: ((n0.s - this.s0) % per + per) % per };
       if (n.s > per*0.4 && n.s < per*0.6) st.half = true;
       if (st.half && st.lastS > per*0.85 && n.s < per*0.15) {
         st.laps++; st.half = false; st.last = now - st.lapStart; st.lapStart = now;
@@ -266,27 +309,51 @@ const Race = {
       const off = n.d > this.t.tw/2; if (off && !st.wasOff) st.off++; st.wasOff = off;
       for (const s of this.stars) {
         if (!s.on) { if (now > s.back) s.on = true; continue; }
-        const q = this.t.at(s.s); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.08) { s.on = false; s.back = now + 4; r.boostUntil = now + 3; }
+        const q = this.item(s); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.08) { s.on = false; s.back = now + 4; r.boostUntil = now + 3; }
       }
-      const o = this.oil; if (!o.on) { if (now > o.back) o.on = true; }
-      else { const q = this.t.at(o.s); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.07) { o.on = false; o.back = now + 6; r.slowUntil = now + 1.2; } }
+      for (const o of this.oils) {
+        if (!o.on) { if (now > o.back) o.on = true; continue; }
+        const q = this.item(o); if (Math.hypot(r.x - q.x, r.y - q.y) < 0.07) { o.on = false; o.back = now + 6; r.slowUntil = now + 1.2; }
+      }
     }
   },
   draw() {
-    const t = this.t;
-    // track surface
+    const t = this.t, N = t.pts.length, TW = W2S(t.tw);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    const path = () => { ctx.beginPath(); for (let i = 0; i <= 200; i++) { const q = t.at(i*t.per/200); ctx[i?'lineTo':'moveTo'](W2S(q.x), W2S(q.y)); } };
-    path(); ctx.strokeStyle = '#1e2a3a'; ctx.lineWidth = W2S(t.tw); ctx.stroke();
-    path(); ctx.strokeStyle = '#fff'; ctx.lineWidth = W2S(t.tw) + 6; ctx.globalCompositeOperation = 'destination-over'; ctx.stroke();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.setLineDash([W2S(0.04), W2S(0.04)]); path(); ctx.strokeStyle = '#3a4a60'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
-    // start line
-    const q = t.at(0); ctx.fillStyle = '#fff';
-    for (let k = 0; k < 8; k++) for (let j = 0; j < 2; j++) if ((k+j)%2) ctx.fillRect(W2S(q.x + j*0.02), W2S(q.y - t.tw/2 + k*t.tw/8), W2S(0.02), W2S(t.tw/8));
-    // stars + oil
-    for (const s of this.stars) if (s.on) { const p = t.at(s.s); star(W2S(p.x), W2S(p.y), W2S(0.045), '#ffe24a'); }
-    if (this.oil.on) { const p = t.at(this.oil.s); ctx.fillStyle = '#5b2bd6'; ctx.beginPath(); ctx.ellipse(W2S(p.x), W2S(p.y), W2S(0.06), W2S(0.04), 0.4, 0, 7); ctx.fill(); }
+    const path = () => { ctx.beginPath(); t.pts.forEach((q, i) => ctx[i?'lineTo':'moveTo'](W2S(q.x), W2S(q.y))); ctx.closePath(); };
+    // soft shadow, kerbs on the bends, asphalt, white edge lines
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = W2S(0.05); ctx.shadowOffsetY = W2S(0.01);
+    path(); ctx.strokeStyle = '#2a2d34'; ctx.lineWidth = TW + W2S(0.035); ctx.stroke(); ctx.restore();
+    for (let i = 0; i < N; i++) {
+      const p = t.pts[i], q = t.pts[(i+1)%N]; if (Math.abs(p.c) < 1 / 0.55) continue;   // kerbs only on bends tighter than 55 cm radius
+      ctx.strokeStyle = (Math.floor(p.s / 0.04) % 2) ? '#e23b3b' : '#ffffff'; ctx.lineWidth = TW + W2S(0.035); ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(W2S(p.x), W2S(p.y)); ctx.lineTo(W2S(q.x), W2S(q.y)); ctx.stroke();
+    }
+    ctx.lineCap = 'round';
+    path(); ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = TW; ctx.stroke();
+    path(); ctx.strokeStyle = '#2a2d34'; ctx.lineWidth = TW - W2S(0.012); ctx.stroke();
+    ctx.setLineDash([W2S(0.05), W2S(0.05)]); path(); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = Math.max(1.5, W2S(0.005)); ctx.stroke(); ctx.setLineDash([]);
+    // chequered start line across the track + grid boxes
+    const q = t.at(this.s0), sq = t.tw / 8;
+    ctx.save(); ctx.translate(W2S(q.x), W2S(q.y)); ctx.rotate(q.a);
+    for (let k = 0; k < 8; k++) for (let j = 0; j < 2; j++) { ctx.fillStyle = (k+j)%2 ? '#fff' : '#111'; ctx.fillRect(W2S(j*sq - sq), W2S(-t.tw/2 + k*sq), W2S(sq), W2S(sq)); }
+    ctx.restore();
+    for (let i = 0; i < 4; i++) {
+      const g = t.at(this.s0 - 0.18 - i*0.16), off = (i % 2 ? -1 : 1) * t.tw * 0.22;
+      ctx.save(); ctx.translate(W2S(g.x - Math.sin(g.a)*off), W2S(g.y + Math.cos(g.a)*off)); ctx.rotate(g.a);
+      ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(W2S(0.07), W2S(-0.06)); ctx.lineTo(W2S(0.07), W2S(0.06)); ctx.moveTo(W2S(0.07), W2S(-0.06)); ctx.lineTo(W2S(-0.02), W2S(-0.06)); ctx.stroke();
+      ctx.restore();
+    }
+    // power-ups
+    for (const s of this.stars) if (s.on) { const p = this.item(s), pulse = 1 + 0.08*Math.sin(now*6 + s.s);
+      ctx.save(); ctx.shadowColor = '#ffd84a'; ctx.shadowBlur = W2S(0.03); star(W2S(p.x), W2S(p.y), W2S(0.042)*pulse, '#ffd84a'); ctx.restore(); }
+    for (const o of this.oils) if (o.on) { const p = this.item(o);
+      ctx.fillStyle = '#7b4dff'; ctx.beginPath(); ctx.ellipse(W2S(p.x), W2S(p.y), W2S(0.055), W2S(0.035), p.a + 0.5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#a98cff'; ctx.beginPath(); ctx.ellipse(W2S(p.x - 0.012), W2S(p.y - 0.008), W2S(0.018), W2S(0.01), p.a + 0.5, 0, 7); ctx.fill(); }
+    // track name, small, in the corner
+    ctx.fillStyle = '#9a958a'; ctx.font = `${Math.max(12, W2S(0.028))}px system-ui`; ctx.textAlign = 'right';
+    ctx.fillText(`${t.name} · ${t.per.toFixed(1)} m lap`, CW - 12, CH - 12);
   },
   hud() {
     return robots.map(r => { const s = this.pl(r.i);
@@ -312,6 +379,7 @@ const BallGame = {
   },
   goal(p) { this.score[p]++; this.pause = now + 1.2; Object.assign(this.ball, { x: AW/2, y: AH/2, vx: 0, vy: 0 }); this.flash = { p, until: now + 1.2 }; },
   draw() {
+    ctx.fillStyle = '#2a2d34'; ctx.fillRect(0, 0, CW, CH);
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
     ctx.strokeRect(2, 2, CW-4, CH-4);
     ctx.beginPath(); ctx.moveTo(CW/2, 0); ctx.lineTo(CW/2, CH); ctx.stroke();
@@ -394,6 +462,7 @@ function hotkey(e) {
   else if (k === '1') setGame('race');
   else if (k === '2') setGame('ball');
   else if (k === 'r') setGame(S.game);
+  else if (k === 't') { const o = ['auto', ...LAYOUT_NAMES]; S.track = o[(o.indexOf(S.track) + 1) % o.length]; setGame('race'); buildSettings(); }
   else if (k === ' ') { paused = !paused; e.preventDefault(); }
   else return;
   syncUI();
@@ -405,8 +474,8 @@ function syncUI() {
   document.querySelectorAll('.corner').forEach(c => c.style.display = calib ? 'block' : 'none');
 }
 const SLIDERS = [
-  ['Floor', [['arenaW', 'Projected width (m)', 0.5, 4, 0.01]]],
-  ['Robot (RoverC guesses)', [['maxSpeed','Top speed (m/s)',0.1,2,0.05], ['maxAccel','Accel (m/s²)',0.2,8,0.1], ['maxTurn','Turn rate (rad/s)',0.5,10,0.1], ['slip','Wheel slip',0,0.5,0.01]]],
+  ['Floor', [['arenaW', 'Projected width (m)', 0.5, 6, 0.01], ['trackW', 'Track width (m)', 0.18, 0.5, 0.01]]],
+  ['Robot (KS0426 guesses)', [['maxSpeed','Top speed (m/s)',0.1,2,0.05], ['maxAccel','Accel (m/s²)',0.2,8,0.1], ['maxTurn','Turn rate (rad/s)',0.5,10,0.1], ['slip','Wheel slip',0,0.5,0.01]]],
   ['Latency chain', [['btMs','Bluetooth (ms)',0,300,1], ['camFps','Camera fps',5,120,1], ['captureMs','Capture (ms)',0,2000,1], ['detectMs','Detection (ms)',0,100,1], ['decideMs','Decision (ms)',0,50,1], ['camNoiseCm','Camera noise (cm)',0,5,0.1], ['dropPct','Dropped frames (%)',0,50,1]]],
   ['Player 1', [['p1Cap','Speed cap (%)',10,100,5], ['p1Assist','Track assist (%)',0,100,5]]],
   ['Player 2', [['p2Cap','Speed cap (%)',10,100,5], ['p2Assist','Track assist (%)',0,100,5]]],
@@ -420,7 +489,8 @@ function buildSettings() {
       h += `<div class="row"><label>Mode</label><select data-k="${p}Mode"><option value="kid">kid: where I point</option><option value="adult">robot-relative</option></select></div>`;
       h += `<div class="row"><label>Sits at</label><select data-k="${p}Seat"><option>bottom</option><option>top</option><option>left</option><option>right</option></select></div>`;
     }
-    if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`;
+    if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`
+      + `<div class="row"><label>Track</label><select data-k="track"><option value="auto">auto (fits the floor)</option>${LAYOUT_NAMES.map(n => `<option>${n}</option>`).join('')}</select></div>`;
     for (const [k, label, mn, mx, st] of list)
       h += `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
   }
@@ -433,6 +503,7 @@ function buildSettings() {
     el.addEventListener('input', () => {
       S[k] = el.type === 'range' || el.dataset.num ? +el.value : el.value; show(); save();
       if (k === 'arenaW') { resize(); setGame(S.game); }
+      if (k === 'trackW' || k === 'track') setGame(S.game);
       if (k === 'players') makeRobots();
     });
   });
@@ -450,15 +521,15 @@ function budgetHTML() {
 
 // ---------- calibration overlay ----------
 function drawCalib() {
-  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#d6d1c6'; ctx.lineWidth = 1;
   for (let x = 0; x <= AW; x += 0.1) { ctx.beginPath(); ctx.moveTo(W2S(x), 0); ctx.lineTo(W2S(x), CH); ctx.stroke(); }
   for (let y = 0; y <= AH; y += 0.1) { ctx.beginPath(); ctx.moveTo(0, W2S(y)); ctx.lineTo(CW, W2S(y)); ctx.stroke(); }
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(1, 1, CW-2, CH-2);
+  ctx.strokeStyle = '#22252b'; ctx.lineWidth = 3; ctx.strokeRect(1, 1, CW-2, CH-2);
   // 1 m ruler
   const x0 = W2S(0.1), y0 = CH/2;
-  ctx.strokeStyle = '#ff0'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + W2S(1), y0); ctx.stroke();
+  ctx.strokeStyle = '#d18f00'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + W2S(1), y0); ctx.stroke();
   for (let i = 0; i <= 10; i++) { ctx.beginPath(); ctx.moveTo(x0 + W2S(i/10), y0 - (i%5 ? 8 : 18)); ctx.lineTo(x0 + W2S(i/10), y0 + (i%5 ? 8 : 18)); ctx.stroke(); }
-  ctx.fillStyle = '#ff0'; ctx.font = '22px system-ui'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#9a6a00'; ctx.font = '22px system-ui'; ctx.textAlign = 'left';
   ctx.fillText(`1 m ruler — measure it on the floor. If it isn't 1 m, fix "Projected width". Now ${AW.toFixed(2)} × ${AH.toFixed(2)} m`, x0, y0 - 30);
   ctx.fillText('Drag the yellow circles onto the corners of a rectangle on the floor to remove keystone distortion.', x0, y0 + 50);
 }
@@ -483,11 +554,11 @@ function frame(t) {
     robots.forEach(r => walls(r, 0));
     game.update(DT);
   }
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CW, CH);
+  ctx.fillStyle = '#f6f4ef'; ctx.fillRect(0, 0, CW, CH);
   if (calib) drawCalib();
   else {
     game.draw(); robots.forEach(r => r.draw());
-    ctx.fillStyle = '#ccc'; ctx.font = `${Math.max(14, W2S(0.035))}px system-ui`; ctx.textAlign = 'center';
+    ctx.fillStyle = '#555'; ctx.font = `${Math.max(14, W2S(0.035))}px system-ui`; ctx.textAlign = 'center';
     if (paused) ctx.fillText('PAUSED', CW/2, 40);
   }
   if (showBudget) $('budget').innerHTML = budgetHTML() + '<hr>' + game.hud();
