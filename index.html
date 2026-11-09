@@ -44,7 +44,9 @@
   Controllers: PS5 pad 1 → player 1, pad 2 → player 2 (press any button to wake).<br>
   Keyboard: P1 <kbd>WASD</kbd> · P2 arrows. Kid mode = go where I point; tank mode = up/down drive, left/right turn.<br>
   <kbd>T</kbd> next track layout (auto picks the most complex one that fits the floor).<br>
-  Grey ring = where the camera <i>thinks</i> the robot is (delayed + noisy).
+  Grey ring = where the camera <i>thinks</i> the robot is (delayed + noisy).<br>
+  AI cars (settings): PRO races, BUDDY plays with the kid, NN learns. <kbd>N</kbd> train the NN · <kbd>V</kbd> show what the AI sees.<br>
+  Blue arrows = boost pads (fixed after corners + moving ones). Star = long turbo. Black puddle = oil.
 </div>
 <div id="settings" class="panel"></div>
 
@@ -62,6 +64,8 @@ const DEFAULTS = {
   // per player
   p1Mode: 'kid', p1Cap: 40, p1Seat: 'bottom', p1Assist: 60,
   p2Mode: 'adult', p2Cap: 100, p2Seat: 'bottom', p2Assist: 0,
+  // AI drivers (race only): off | pro | buddy | learner
+  aiA: 'pro', aiB: 'off', aiC: 'off', aiSkill: 70, aiGrip: 1.2, showRays: false,
   game: 'race',
   corners: null,
 };
@@ -123,22 +127,25 @@ let now = 0; // sim time, seconds
 const ROBOT_SIZE = 0.12, ROBOT_R = 0.07, ROBOT_M = 0.35;
 const COLORS = ['#ffc21a', '#2fa8ff', '#ff5ca8', '#5fe35c'];
 class Robot {
-  constructor(i) { this.i = i; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
+  constructor(i, ai) { this.i = i; this.ai = ai || null; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
   reset() {
     const g = game.start(this.i);
     this.x = g.x; this.y = g.y; this.th = g.th;
     this.vx = 0; this.vy = 0; this.w = 0;
     this.cmdQ = []; this.hist = []; this.sensed = { x:this.x, y:this.y, th:this.th, t:0 };
-    this.lastCam = 0; this.boostUntil = 0; this.slowUntil = 0;
+    this.lastCam = 0; this.boostUntil = 0; this.slowUntil = 0; this.padUntil = 0;
   }
   p(k) { return S['p' + (this.i+1) + k]; }
   get speedLimit() {
-    let v = S.maxSpeed * this.p('Cap') / 100;
-    if (now < this.boostUntil) v *= 1.5;
-    return v;
+    const cap = this.ai ? this.ai.cap() : this.p('Cap');
+    let m = 1;
+    if (now < this.boostUntil) m = Math.max(m, 1.5);   // star: long turbo
+    if (now < this.padUntil) m = Math.max(m, 1.7);     // boost pad: short kick
+    return S.maxSpeed * cap / 100 * m;
   }
   // input -> body command (forward speed + yaw rate: 2 driven wheels, no strafing), pushed through Bluetooth delay
   command(inp) {
+    if (this.ai) { const c = this.ai.drive(this); this.cmdQ.push({ t: now, v: c.v, w: c.w }); return; }
     const vmax = this.speedLimit;
     let v, w;
     if (this.p('Mode') === 'kid') {
@@ -192,6 +199,16 @@ class Robot {
   }
   draw() {
     const s = this.sensed;
+    if (this.ai && S.showRays && this.ai.rays) {   // what the AI "sees": distance to the track edges / other cars
+      this.ai.rays.forEach((d, k) => { const a = s.th + RAY_A[k];
+        ctx.strokeStyle = d < 0.15 ? 'rgba(255,80,80,.9)' : 'rgba(120,255,160,.7)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(W2S(s.x), W2S(s.y)); ctx.lineTo(W2S(s.x + Math.cos(a)*d), W2S(s.y + Math.sin(a)*d)); ctx.stroke(); });
+    }
+    if (now < this.padUntil) {   // blue speed streaks behind the car
+      ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th); ctx.strokeStyle = 'rgba(90,220,255,.8)'; ctx.lineWidth = Math.max(2, W2S(0.006)); ctx.lineCap = 'round';
+      for (const o of [-0.035, 0, 0.035]) { ctx.beginPath(); ctx.moveTo(W2S(-0.08), W2S(o)); ctx.lineTo(W2S(-0.08 - 0.05 - Math.random()*0.04), W2S(o)); ctx.stroke(); }
+      ctx.restore();
+    }
     ctx.strokeStyle = 'rgba(150,150,150,.9)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke(); ctx.setLineDash([]);
     ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th);
@@ -205,6 +222,8 @@ class Robot {
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#1b1d22'; ctx.beginPath(); ctx.moveTo(h*0.75, 0); ctx.lineTo(-h*0.15, -h*0.42); ctx.lineTo(-h*0.15, h*0.42); ctx.fill();
     ctx.restore();
+    if (this.ai) { ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(10, W2S(0.022))}px system-ui`; ctx.textAlign = 'center';
+      ctx.fillText(this.ai.label, W2S(this.x), W2S(this.y) - h - 4); }
   }
 }
 
@@ -274,7 +293,33 @@ function buildTrack(name) {
     if (along < tw * 2.5) continue;
     minSep = Math.min(minSep, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y));
   }
-  return { name, tw, per, pts, at, nearest, minSep };
+  // smoothed curvature (1/m, signed) so drivers can read the bends ahead
+  const K = pts.map((_, i) => { let a = 0; for (let j = -6; j <= 6; j++) a += pts[(i + j + N) % N].c; return a / 13; });
+  function idx(s) { s = ((s % per) + per) % per; let lo = 0, hi = N - 1; while (lo < hi) { const md = (lo + hi + 1) >> 1; if (pts[md].s <= s) lo = md; else hi = md - 1; } return lo; }
+  const curv = s => K[idx(s)];
+  // nearest centreline point, searched near the last one (fast) or everywhere; lat = signed side offset
+  function locate(p, hint) {
+    let bi = 0, bd = Infinity;
+    const scan = i => { const q = pts[i], d = (p.x - q.x)**2 + (p.y - q.y)**2; if (d < bd) { bd = d; bi = i; } };
+    if (hint == null) for (let i = 0; i < N; i++) scan(i); else for (let k = -30; k <= 30; k++) scan((hint + k + N) % N);
+    const q = pts[bi], lat = -(p.x - q.x)*Math.sin(q.a) + (p.y - q.y)*Math.cos(q.a);
+    return { i: bi, s: q.s, d: Math.sqrt(bd), lat, a: q.a, px: q.x, py: q.y };
+  }
+  // 1 cm occupancy grid of the asphalt, for the AI's distance rays
+  let grid = null, gw = 0, gh = 0; const G = 100;
+  function onTrack(x, y) {
+    if (!grid) {
+      gw = Math.ceil(AW*G); gh = Math.ceil(AH*G);
+      const c = document.createElement('canvas'); c.width = gw; c.height = gh; const g = c.getContext('2d');
+      g.lineWidth = tw*G; g.lineJoin = 'round'; g.lineCap = 'round';
+      g.beginPath(); pts.forEach((q, i) => g[i ? 'lineTo' : 'moveTo'](q.x*G, q.y*G)); g.closePath(); g.stroke();
+      const d = g.getImageData(0, 0, gw, gh).data; grid = new Uint8Array(gw*gh);
+      for (let i = 0; i < gw*gh; i++) grid[i] = d[i*4 + 3] > 127 ? 1 : 0;
+    }
+    const i = (x*G) | 0, j = (y*G) | 0;
+    return i >= 0 && j >= 0 && i < gw && j < gh && grid[j*gw + i] === 1;
+  }
+  return { name, tw, per, pts, at, nearest, minSep, K, curv, locate, onTrack };
 }
 const fits = t => t.minSep > t.tw * 1.25;
 function pickTrack() {
@@ -289,11 +334,30 @@ function pickAuto() {
 }
 const Race = {
   name: 'race',
-  init() { this.t = pickTrack(); const per = this.t.per, nStars = Math.max(3, Math.round(per / 1.2));
-    this.stars = Array.from({ length: nStars }, (_, i) => ({ s: (0.12 + i / nStars) * per, on: true, back: 0, side: (i % 3 - 1) * 0.25 }));
-    const nOil = Math.max(1, Math.round(per / 2.5));
-    this.oils = Array.from({ length: nOil }, (_, i) => ({ s: (0.38 + i / nOil) * per, on: true, back: 0, side: i % 2 ? 0.2 : -0.2 }));
-    this.p = {}; this.start0 = now; this.s0 = Math.min(0.9, per * 0.08); },
+  init() {
+    this.t = pickTrack(); const t = this.t, per = t.per;
+    this.s0 = Math.min(0.9, per * 0.08); this.p = {}; this.start0 = now;
+    const s0 = this.s0, used = [];
+    this.blocked = s => { const d = wrapD(s - s0, per); return d > -0.85 && d < 0.3; };   // start grid + line stay clear
+    this.free = (s, gap, extra = []) => !this.blocked(s) && used.concat(extra).every(u => Math.abs(wrapD(s - u, per)) > gap);
+    const place = (s, gap) => { for (const g of [gap, gap/2, 0.25]) for (let k = 0; k < 80; k++) { const c = s + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.1; if (this.free(c, g)) { used.push(c); return c; } } return null; };
+    // fixed boost pads right after the corners (Hot Wheels style booster)
+    this.pads = [];
+    const N = t.pts.length;
+    for (let i = 0; i < N && this.pads.length < 3; i++) {
+      if (Math.abs(t.K[i]) > 1/0.6 && Math.abs(t.K[(i + 10) % N]) < 1/1.2) {
+        const s = place(t.pts[(i + 10) % N].s + 0.05, per / 6); if (s != null) this.pads.push({ s, fixed: true, hit: -9 });
+        i += 30;
+      }
+    }
+    if (!this.pads.length) { const s = place(s0 + per/2, 0.5); if (s != null) this.pads.push({ s, fixed: true, hit: -9 }); }
+    // moving pads: pop up somewhere new every 7-11 s
+    for (let k = 0; k < (per > 7 ? 2 : 1); k++) this.pads.push({ s: null, fixed: false, hit: -9, next: 0, born: 0 });
+    const nStars = Math.max(1, Math.round(per / 4));
+    this.stars = []; for (let i = 0; i < nStars; i++) { const s = place(s0 + (0.3 + i / nStars) * per, 0.6); if (s != null) this.stars.push({ s, on: true, back: 0, side: (i % 2 ? 1 : -1) * 0.2 }); }
+    const nOil = Math.max(1, Math.round(per / 3));
+    this.oils = []; for (let i = 0; i < nOil; i++) { const s = place(s0 + (0.55 + i / nOil) * per, 0.6); if (s != null) this.oils.push({ s, on: true, back: 0, side: i % 2 ? 0.2 : -0.2 }); }
+  },
   start(i) { const q = this.t.at(this.s0 - 0.18 - i*0.16), off = (i % 2 ? -1 : 1) * this.t.tw * 0.22, a = q.a;
     return { x: q.x - Math.sin(a)*off, y: q.y + Math.cos(a)*off, th: a }; },
   item(o) { const q = this.t.at(o.s), off = o.side * this.t.tw; return { x: q.x - Math.sin(q.a)*off, y: q.y + Math.cos(q.a)*off, a: q.a }; },
@@ -304,7 +368,19 @@ const Race = {
     return { x: (n.px - pose.x)/n.d * k, y: (n.py - pose.y)/n.d * k };
   },
   update() {
+    const t = this.t;
+    for (const p of this.pads) if (!p.fixed && now >= p.next) {
+      const others = this.pads.filter(q => q !== p && q.s != null).map(q => q.s);
+      let s = null; for (let k = 0; k < 40 && s == null; k++) { const c = Math.random() * t.per; if (this.free(c, 0.45, others)) s = c; }
+      p.s = s; p.born = now; p.next = now + 7 + Math.random() * 4;
+    }
     for (const r of robots) {
+      for (const p of this.pads) {
+        if (p.s == null || (!p.fixed && now < p.born + 0.6)) continue;
+        const q = t.at(p.s), dx = r.x - q.x, dy = r.y - q.y;
+        const al = dx*Math.cos(q.a) + dy*Math.sin(q.a), la = -dx*Math.sin(q.a) + dy*Math.cos(q.a);
+        if (Math.abs(al) < 0.09 && Math.abs(la) < t.tw*0.32) { r.padUntil = now + 1.0; p.hit = now; }
+      }
       const st = this.pl(r.i), n0 = this.t.nearest(r), per = this.t.per, n = { ...n0, s: ((n0.s - this.s0) % per + per) % per };
       if (n.s > per*0.4 && n.s < per*0.6) st.half = true;
       if (st.half && st.lastS > per*0.85 && n.s < per*0.15) {
@@ -365,19 +441,49 @@ const Race = {
   drawLive() {
     const t = this.t;
     // power-ups
+    for (const p of this.pads) if (p.s != null) this.drawPad(p);
+    for (const o of this.oils) if (o.on) this.drawOil(o);
     for (const s of this.stars) if (s.on) { const p = this.item(s), pulse = 1 + 0.08*Math.sin(now*6 + s.s);
       ctx.save(); ctx.shadowColor = '#ffd84a'; ctx.shadowBlur = W2S(0.03); star(W2S(p.x), W2S(p.y), W2S(0.042)*pulse, '#ffd84a'); ctx.restore(); }
-    for (const o of this.oils) if (o.on) { const p = this.item(o);
-      ctx.fillStyle = '#7b4dff'; ctx.beginPath(); ctx.ellipse(W2S(p.x), W2S(p.y), W2S(0.055), W2S(0.035), p.a + 0.5, 0, 7); ctx.fill();
-      ctx.fillStyle = '#a98cff'; ctx.beginPath(); ctx.ellipse(W2S(p.x - 0.012), W2S(p.y - 0.008), W2S(0.018), W2S(0.01), p.a + 0.5, 0, 7); ctx.fill(); }
+    Trainer.draw();
     // track name, small, in the corner
     ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `${Math.max(12, W2S(0.028))}px system-ui`; ctx.textAlign = 'right';
     ctx.fillText(`${t.name} · ${t.per.toFixed(1)} m lap`, CW - 12, CH - 12);
     if (t.note) { ctx.fillStyle = '#fff3c4'; ctx.textAlign = 'center'; ctx.fillText(t.note, CW/2, CH - 12); }
   },
+  drawPad(p) {
+    const q = this.t.at(p.s), L = 0.16, Wd = this.t.tw * 0.62;
+    let alpha = 1;
+    if (!p.fixed) { const left = p.next - now; alpha = Math.min(1, (now - p.born) / 0.6, left / 0.6); if (left < 2) alpha *= 0.55 + 0.45*Math.abs(Math.sin(now*10)); }
+    if (alpha <= 0) return;
+    ctx.save(); ctx.globalAlpha = alpha; ctx.translate(W2S(q.x), W2S(q.y)); ctx.rotate(q.a);
+    ctx.beginPath(); ctx.roundRect(W2S(-L/2), W2S(-Wd/2), W2S(L), W2S(Wd), W2S(0.015));
+    ctx.fillStyle = now - p.hit < 0.4 ? 'rgba(130,225,255,.6)' : 'rgba(10,60,170,.6)'; ctx.fill();
+    ctx.strokeStyle = '#3fd8ff'; ctx.lineWidth = Math.max(2, W2S(0.004)); ctx.stroke(); ctx.clip();
+    // chevrons sliding forward
+    ctx.shadowColor = '#3fd8ff'; ctx.shadowBlur = W2S(0.02); ctx.strokeStyle = '#c8f6ff'; ctx.lineWidth = W2S(0.012); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const ph = (now * 1.6) % 1;
+    for (let k = -1; k < 3; k++) { const x = -L/2 + ((k + ph) / 3) * L + 0.03;
+      ctx.beginPath(); ctx.moveTo(W2S(x - 0.03), W2S(-Wd*0.32)); ctx.lineTo(W2S(x), 0); ctx.lineTo(W2S(x - 0.03), W2S(Wd*0.32)); ctx.stroke(); }
+    ctx.restore();
+  },
+  drawOil(o) {   // glossy black puddle with a rainbow sheen
+    const p = this.item(o), sz = 0.05;
+    ctx.save(); ctx.translate(W2S(p.x), W2S(p.y)); ctx.rotate(p.a + o.s);
+    ctx.beginPath();
+    for (let k = 0; k <= 24; k++) { const a = k / 24 * Math.PI * 2, rr = sz * (0.8 + 0.18*Math.sin(a*3 + o.s*7) + 0.08*Math.sin(a*5 + o.s*3));
+      ctx.lineTo(W2S(Math.cos(a)*rr*1.25), W2S(Math.sin(a)*rr*0.8)); }
+    ctx.closePath(); ctx.fillStyle = '#06060a'; ctx.fill(); ctx.strokeStyle = 'rgba(190,170,255,.7)'; ctx.lineWidth = Math.max(1.5, W2S(0.004)); ctx.stroke();
+    const g = ctx.createLinearGradient(W2S(-sz), W2S(-sz), W2S(sz), W2S(sz));
+    g.addColorStop(0, 'rgba(140,90,255,0)'); g.addColorStop(0.35, 'rgba(140,90,255,.55)'); g.addColorStop(0.5, 'rgba(60,220,200,.5)');
+    g.addColorStop(0.65, 'rgba(255,220,90,.45)'); g.addColorStop(1, 'rgba(255,220,90,0)');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(W2S(-sz*0.4), W2S(-sz*0.25), W2S(sz*0.2), W2S(sz*0.06), -0.4, 0, 7); ctx.fill();
+    ctx.restore();
+  },
   hud() {
     return robots.map(r => { const s = this.pl(r.i);
-      return `<span style="color:${r.color}">P${r.i+1}</span> laps ${s.laps} · last ${s.last ? s.last.toFixed(1)+'s' : '–'} · best ${s.best ? s.best.toFixed(1)+'s' : '–'} · off-track ${s.off}`; }).join('<br>');
+      return `<span style="color:${r.color}">${r.ai ? r.ai.label : 'P' + (r.i+1)}</span> laps ${s.laps} · last ${s.last ? s.last.toFixed(1)+'s' : '–'} · best ${s.best ? s.best.toFixed(1)+'s' : '–'} · off-track ${s.off}`; }).join('<br>');
   },
 };
 const BallGame = {
@@ -483,6 +589,172 @@ function star(x, y, r, c) {
   ctx.fill();
 }
 
+// ---------- AI drivers ----------
+// Every driver gets the same "full view" a camera on the ceiling gives: its own (delayed, noisy) pose, the map of the
+// track (so it knows how far the next bend is and how tight) and distance rays to the track edges / other cars.
+// Later the robot's own sensors feed the same rays -> that is where sensor fusion and obstacle avoidance plug in.
+const RAY_A = [-1.2, -0.6, -0.25, 0, 0.25, 0.6, 1.2], RAY_MAX = 0.6;
+const wrapD = (d, per) => ((d + per/2) % per + per) % per - per/2;
+function rays(self, pose, max = RAY_MAX) {
+  const t = game.t, out = [];
+  for (const da of RAY_A) {
+    const a = pose.th + da, c = Math.cos(a), s = Math.sin(a); let d = 0.02;
+    for (; d < max; d += 0.01) {
+      const x = pose.x + c*d, y = pose.y + s*d;
+      if (!t.onTrack(x, y)) break;
+      if (self && robots.some(o => o !== self && Math.hypot(o.sensed.x - x, o.sensed.y - y) < o.r)) break;
+    }
+    out.push(Math.min(d, max));
+  }
+  return out;
+}
+const kidRobot = () => robots.find(r => !r.ai && r.p('Mode') === 'kid') || robots.find(r => !r.ai);
+
+// PRO: plans speed from the bends ahead, follows the line, changes lane to pass. BUDDY: same driving, but stays
+// just ahead of the child's car to show the way, waits if the child falls behind, never runs away with the race.
+class TrackDriver {
+  constructor(kind) { this.kind = kind; this.label = kind === 'pro' ? 'PRO' : 'BUDDY'; this.hint = null; this.kidHint = null;
+    this.vEst = 0; this.lane = 0; this.laneT = 0; this.laneUntil = 0; this.rays = null; }
+  cap() { if (this.kind === 'buddy') { const k = kidRobot(); return Math.min(100, (k ? k.p('Cap') : 50) * 1.3); } return S.aiSkill; }
+  drive(r) {
+    const t = game.t, P = r.sensed, L = t.locate(P, this.hint); this.hint = L.i;
+    const vmax = r.speedLimit, aBr = S.maxAccel * 0.8;
+    // speed plan: fastest speed from which we can still brake down for every bend in the next 1.5 m
+    let vt = vmax;
+    for (let d = 0; d <= 1.5; d += 0.04) {
+      const c = Math.abs(t.curv(L.s + d)) + 1e-3, vc = Math.min(Math.sqrt(S.aiGrip / c), S.maxTurn * 0.7 / c);
+      vt = Math.min(vt, Math.sqrt(vc*vc + 2*aBr*d));
+    }
+    this.rays = rays(r, P);
+    // cars ahead: pick the other lane and don't ram them
+    for (const o of robots) if (o !== r) {
+      const dx = o.sensed.x - P.x, dy = o.sensed.y - P.y, c = Math.cos(P.th), s = Math.sin(P.th), fwd = dx*c + dy*s, lat = -dx*s + dy*c;
+      if (fwd > 0 && fwd < 0.45 && Math.abs(lat) < 0.2) {
+        const olat = t.locate(o.sensed, null).lat;
+        if (Math.abs(olat - this.laneT) < 0.13) { this.laneT = (olat > 0 ? -1 : 1) * t.tw * 0.3; this.laneUntil = now + 1.5; }
+        if (Math.abs(olat - this.laneT) < 0.13) vt = Math.min(vt, Math.hypot(o.vx, o.vy) + Math.max(0, (fwd - 0.16) * 2.5));   // no room: follow
+      }
+    }
+    if (now > this.laneUntil) this.laneT = 0;
+    if (this.kind === 'buddy') {
+      const k = kidRobot();
+      if (k && k !== r) {
+        const kl = t.locate(k.sensed, this.kidHint); this.kidHint = kl.i;
+        const delta = wrapD(L.s - kl.s, t.per), kv = Math.hypot(k.vx, k.vy);
+        let want = kv + 1.5 * (0.35 - delta);   // aim to be 35 cm ahead of the child
+        if (delta > 0.9) want = 0;              // too far ahead: wait
+        vt = clamp(want, 0, vt);
+        if (now > this.laneUntil) this.laneT = (kl.lat > 0 ? -1 : 1) * t.tw * 0.22;   // drive beside, not on top
+      }
+    }
+    this.lane += clamp(this.laneT - this.lane, -0.4*DT, 0.4*DT);
+    // pure pursuit on a point ahead on the chosen lane
+    const Ld = 0.1 + 0.35 * this.vEst, q = t.at(L.s + Ld);
+    const tx = q.x - Math.sin(q.a)*this.lane, ty = q.y + Math.cos(q.a)*this.lane;
+    const alpha = angDiff(Math.atan2(ty - P.y, tx - P.x), P.th);
+    const w = clamp(Math.max(3, 2*this.vEst/Ld) * alpha, -S.maxTurn, S.maxTurn);
+    const v = Math.abs(alpha) > 1.2 ? 0 : vt * Math.cos(alpha)**2;
+    this.vEst += clamp(v - this.vEst, -S.maxAccel*DT, S.maxAccel*DT);
+    return { v, w };
+  }
+}
+
+// NN: a small neural net that learns to drive by evolution (press N to train). Inputs = the 7 rays, its speed,
+// side offset and heading error to the track, and the curvature 15 / 35 / 60 cm ahead. Outputs = speed, turn.
+const NIN = 13, NH = 10, NW = NIN*NH + NH + NH*2 + 2;
+const Net = {
+  random() { return Float32Array.from({ length: NW }, () => gauss() * 0.5); },
+  run(w, x) {
+    let k = 0; const h = new Array(NH);
+    for (let j = 0; j < NH; j++) { let s = 0; for (let i = 0; i < NIN; i++) s += w[k++] * x[i]; h[j] = Math.tanh(s + w[k++]); }
+    const o = [0, 0];
+    for (let j = 0; j < 2; j++) { let s = 0; for (let i = 0; i < NH; i++) s += w[k++] * h[i]; o[j] = s + w[k++]; }
+    return [1 / (1 + Math.exp(-o[0])), Math.tanh(o[1])];
+  },
+};
+function observe(t, P, L, rr, vn) {
+  return [...rr.map(d => d / RAY_MAX), vn, L.lat / (t.tw/2), angDiff(P.th, L.a) / Math.PI,
+    Math.tanh(t.curv(L.s + 0.15) * 0.3), Math.tanh(t.curv(L.s + 0.35) * 0.3), Math.tanh(t.curv(L.s + 0.6) * 0.3)];
+}
+let BRAIN = { net: null, gen: 0, fit: null };
+try { const b = JSON.parse(localStorage.getItem('robotwin-brain') || 'null'); if (b && b.net && b.net.length === NW) BRAIN = { ...b, net: Float32Array.from(b.net) }; } catch (e) {}
+function saveBrain() { try { localStorage.setItem('robotwin-brain', JSON.stringify({ ...BRAIN, net: Array.from(BRAIN.net) })); } catch (e) {} }
+class NeuralDriver {
+  constructor() { this.hint = null; this.vEst = 0; this.rays = null; }
+  get label() { return BRAIN.net ? `NN g${BRAIN.gen}` : 'NN ?'; }
+  cap() { return S.aiSkill; }
+  drive(r) {
+    if (!BRAIN.net) BRAIN.net = Net.random();
+    const t = game.t, P = r.sensed, L = t.locate(P, this.hint); this.hint = L.i;
+    this.rays = rays(r, P);
+    const o = Net.run(BRAIN.net, observe(t, P, L, this.rays, this.vEst / S.maxSpeed));
+    const v = o[0] * r.speedLimit; this.vEst += clamp(v - this.vEst, -S.maxAccel*DT, S.maxAccel*DT);
+    return { v, w: o[1] * S.maxTurn };
+  }
+}
+const makeAI = kind => kind === 'learner' ? new NeuralDriver() : new TrackDriver(kind);
+
+// Evolution: 40 cars drive headless (fast, no latency) from the same random spot; score = metres of track covered in
+// 25 s, minus a penalty for leaving the asphalt. The best 4 survive; the rest are mixed + mutated copies of the top 12.
+const POP = 40;
+const Trainer = {
+  on: false, gen: 0, pop: null, agents: null, log: [],
+  toggle() {
+    if (game !== Race) return;
+    this.on = !this.on;
+    if (this.on) { if (!this.pop) { this.gen = BRAIN.gen || 0; this.pop = Array.from({ length: POP }, (_, i) => i === 0 && BRAIN.net ? Float32Array.from(BRAIN.net) : Net.random()); } this.startGen(); }
+  },
+  reset() { this.on = false; this.pop = null; this.log = []; BRAIN = { net: null, gen: 0, fit: null }; try { localStorage.removeItem('robotwin-brain'); } catch (e) {} },
+  startGen() {
+    const t = game.t, s = Math.random() * t.per, q = t.at(s), L = t.locate(q, null);
+    this.agents = this.pop.map(w => ({ w, x: q.x, y: q.y, th: q.a, v: 0, om: 0, hint: L.i, s: L.s, prog: 0, t: 0, alive: true, fit: 0, hist: [] }));
+  },
+  tick(budgetMs) {
+    if (!this.on || game !== Race) return;
+    const t = game.t, dt = 1/30, t0 = performance.now();
+    while (performance.now() - t0 < budgetMs) {
+      let alive = 0;
+      for (const a of this.agents) {
+        if (!a.alive) continue; alive++;
+        // the net sees the world as the real car will: late (camera + Bluetooth) and a bit noisy
+        const n = S.camNoiseCm / 100;
+        a.hist.push({ x: a.x + gauss()*n, y: a.y + gauss()*n, th: a.th });
+        const lag = Math.round((1000/S.camFps/2 + S.captureMs + S.detectMs + S.decideMs + S.btMs) / 1000 / dt);
+        while (a.hist.length > lag + 1) a.hist.shift();
+        const P = a.hist[0], L = t.locate(P, a.hint), o = Net.run(a.w, observe(t, P, L, rays(null, P), a.v / S.maxSpeed));
+        const vc = o[0] * S.maxSpeed * S.aiSkill / 100, wc = o[1] * S.maxTurn;
+        a.v += clamp(vc - a.v, -S.maxAccel*dt, S.maxAccel*dt); a.om += clamp(wc - a.om, -S.maxTurn*8*dt, S.maxTurn*8*dt);
+        a.x += a.v*Math.cos(a.th)*dt; a.y += a.v*Math.sin(a.th)*dt; a.th += a.om*dt; a.t += dt;
+        const L2 = t.locate(a, a.hint); a.hint = L2.i; a.prog += wrapD(L2.s - a.s, t.per); a.s = L2.s;
+        if (L2.d > t.tw/2) { a.alive = false; a.fit = a.prog - 0.3; }
+        else if (a.t > 25 || (a.t > 3 && a.prog < a.t * 0.04)) { a.alive = false; a.fit = a.prog; }
+      }
+      if (!alive) this.endGen();
+    }
+  },
+  endGen() {
+    const ranked = [...this.agents].sort((a, b) => b.fit - a.fit), top = ranked[0];
+    this.gen++; this.log.push(top.fit); if (this.log.length > 12) this.log.shift();
+    BRAIN = { net: Float32Array.from(top.w), gen: this.gen, fit: top.fit }; saveBrain();
+    const parents = ranked.slice(0, 12).map(a => a.w), next = ranked.slice(0, 4).map(a => a.w);
+    while (next.length < POP) {
+      const p1 = parents[Math.random()*12 | 0], p2 = parents[Math.random()*12 | 0];
+      next.push(p1.map((v, i) => (Math.random() < 0.5 ? v : p2[i]) + (Math.random() < 0.1 ? gauss() * 0.3 : 0)));
+    }
+    this.pop = next; this.startGen();
+  },
+  draw() {
+    if (!this.on || !this.agents) return;
+    for (const a of this.agents) { ctx.fillStyle = a.alive ? 'rgba(255,255,255,.75)' : 'rgba(255,255,255,.15)';
+      ctx.beginPath(); ctx.arc(W2S(a.x), W2S(a.y), Math.max(2, W2S(0.012)), 0, 7); ctx.fill(); }
+  },
+  html() {
+    if (!this.on) return '';
+    const alive = this.agents.filter(a => a.alive).length;
+    return `<b>Training NN</b> — generation ${this.gen} · ${alive}/${POP} still driving<br>best per generation (m in 25 s): ${this.log.map(f => f.toFixed(1)).join(' · ') || '…'}`;
+  },
+};
+
 // ---------- input ----------
 const keys = new Set();
 addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); hotkey(e); });
@@ -547,6 +819,8 @@ function hotkey(e) {
   else if (k === '2') setGame('ball');
   else if (k === 'r') setGame(S.game);
   else if (k === 't') { const o = ['auto', ...LAYOUT_NAMES]; S.track = o[(o.indexOf(S.track) + 1) % o.length]; setGame('race'); buildSettings(); }
+  else if (k === 'n') Trainer.toggle();
+  else if (k === 'v') { S.showRays = !S.showRays; save(); }
   else if (k === ' ') { paused = !paused; e.preventDefault(); }
   else return;
   syncUI();
@@ -563,6 +837,7 @@ const SLIDERS = [
   ['Latency chain', [['btMs','Bluetooth (ms)',0,300,1], ['camFps','Camera fps',5,120,1], ['captureMs','Capture (ms)',0,2000,1], ['detectMs','Detection (ms)',0,100,1], ['decideMs','Decision (ms)',0,50,1], ['camNoiseCm','Camera noise (cm)',0,5,0.1], ['dropPct','Dropped frames (%)',0,50,1]]],
   ['Player 1', [['p1Cap','Speed cap (%)',10,100,5], ['p1Assist','Track assist (%)',0,100,5]]],
   ['Player 2', [['p2Cap','Speed cap (%)',10,100,5], ['p2Assist','Track assist (%)',0,100,5]]],
+  ['AI drivers (race)', [['aiSkill','AI top speed (%)',20,100,5], ['aiGrip','AI corner grip (m/s²)',0.3,4,0.1]]],
 ];
 function buildSettings() {
   let h = '<b>Settings</b> <button id="defaults">reset all</button>';
@@ -572,6 +847,10 @@ function buildSettings() {
       const p = title.endsWith('1') ? 'p1' : 'p2';
       h += `<div class="row"><label>Mode</label><select data-k="${p}Mode"><option value="kid">kid: where I point</option><option value="adult">robot-relative</option></select></div>`;
       h += `<div class="row"><label>Sits at</label><select data-k="${p}Seat"><option>bottom</option><option>top</option><option>left</option><option>right</option></select></div>`;
+    }
+    if (title.startsWith('AI')) {
+      for (const k of ['aiA', 'aiB', 'aiC']) h += `<div class="row"><label>AI car ${k.at(-1)}</label><select data-k="${k}"><option value="off">off</option><option value="pro">PRO (racer)</option><option value="buddy">BUDDY (plays with the kid)</option><option value="learner">NN (learns, N = train)</option></select></div>`;
+      h += `<div class="row"><button id="trainBtn">Train NN (N)</button><button id="brainReset">Forget NN</button></div>`;
     }
     if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`
       + `<div class="row"><label>Track</label><select data-k="track"><option value="auto">auto (fits the floor)</option>${LAYOUT_NAMES.map(n => `<option>${n}</option>`).join('')}</select></div>`;
@@ -588,9 +867,11 @@ function buildSettings() {
       S[k] = el.type === 'range' || el.dataset.num ? +el.value : el.value; show(); save();
       if (k === 'arenaW') { resize(); setGame(S.game); }
       if (k === 'trackW' || k === 'track') setGame(S.game);
-      if (k === 'players') makeRobots();
+      if (k === 'players' || k.startsWith('ai') && k.length === 3) makeRobots();
     });
   });
+  $('trainBtn').onclick = () => Trainer.toggle();
+  $('brainReset').onclick = () => { Trainer.reset(); makeRobots(); };
   $('defaults').onclick = () => { S = Object.assign({}, DEFAULTS); save(); resize(); buildSettings(); setGame(S.game); };
 }
 function budgetHTML() {
@@ -620,8 +901,11 @@ function drawCalib() {
 
 // ---------- main ----------
 let game, robots = [];
-function makeRobots() { robots = []; for (let i = 0; i < S.players; i++) robots.push(new Robot(i)); }
-function setGame(name) { S.game = name; save(); game = GAMES[name]; game.init(); makeRobots(); }
+function makeRobots() {
+  robots = []; for (let i = 0; i < S.players; i++) robots.push(new Robot(i));
+  if (game === Race) for (const k of ['aiA', 'aiB', 'aiC']) if (S[k] !== 'off' && robots.length < 4) robots.push(new Robot(robots.length, makeAI(S[k])));
+}
+function setGame(name) { S.game = name; save(); game = GAMES[name]; game.init(); makeRobots(); if (Trainer.on) Trainer.startGen(); if (game !== Race) Trainer.on = false; }
 if (isTouch) { showHelp = false; document.querySelectorAll('.stick').forEach(s => s.style.display = 'block'); $('touchbar').style.display = 'flex'; }
 resize(); setGame(S.game in GAMES ? S.game : 'race'); buildSettings(); syncUI();
 
@@ -632,12 +916,13 @@ function frame(t) {
     acc -= DT;
     if (paused || calib) continue;
     now += DT;
-    robots.forEach(r => r.command(readInput(r.i)));
+    robots.forEach(r => r.command(r.ai ? null : readInput(r.i)));
     robots.forEach(r => r.step(DT));
     for (let i = 0; i < robots.length; i++) for (let j = i+1; j < robots.length; j++) collide(robots[i], robots[j], 0.3);
     robots.forEach(r => walls(r, 0));
     game.update(DT);
   }
+  Trainer.tick(8);
   ctx.fillStyle = '#f6f4ef'; ctx.fillRect(0, 0, CW, CH);
   if (calib) drawCalib();
   else {
@@ -649,6 +934,7 @@ function frame(t) {
   else $('budget').innerHTML = '';
   $('budget').style.display = (showBudget || !calib) ? 'block' : 'none';
   if (!showBudget && !calib) $('budget').innerHTML = game.hud();
+  if (Trainer.on) $('budget').innerHTML += '<hr>' + Trainer.html();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
