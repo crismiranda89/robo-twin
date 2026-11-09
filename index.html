@@ -9,7 +9,16 @@
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; overflow:hidden; }
   #view { position:absolute; left:0; top:0; transform-origin:0 0; }
   .panel { position:absolute; background:var(--panel); border:1px solid #d9d5cc; box-shadow:0 2px 10px rgba(0,0,0,.08); border-radius:10px; padding:12px 14px; z-index:5; }
-  #settings { right:12px; top:12px; width:310px; max-height:calc(100% - 48px); overflow:auto; display:none; }
+  #settings { right:0; top:0; bottom:0; width:330px; overflow:auto; display:none; border-radius:0; border:0; border-left:1px solid rgba(255,255,255,.12);
+    background:rgba(32,34,40,.86); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); color:#eceef2; z-index:9; padding:14px 16px; box-shadow:-6px 0 24px rgba(0,0,0,.35); }
+  #settings h3 { color:#8cc8ff; } #settings .dim, #settings small { color:#9aa0aa; font-size:12px; } #settings small { display:block; font-weight:400; }
+  #settings select, #settings button { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 8px; }
+  #settings button.on { background:#1a73c9; border-color:#1a73c9; }
+  #settings .mhead { display:flex; justify-content:space-between; align-items:center; }
+  #settings .tabs button { font-weight:600; padding:6px 14px; }
+  #settings .step button { width:30px; font-size:16px; padding:2px 0; } #settings .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
+  #settings input[type=range] { accent-color:#4aa3ff; }
+  #menuBtn { position:absolute; top:10px; right:10px; z-index:8; font:600 15px system-ui; padding:7px 12px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:8px; cursor:pointer; }
   #help { left:12px; bottom:12px; display:none; max-width:420px; }
   #budget { left:12px; top:12px; display:none; font-variant-numeric:tabular-nums; }
   .panel h3 { margin:10px 0 6px; font-size:13px; color:var(--accent); text-transform:uppercase; letter-spacing:.05em; }
@@ -24,7 +33,7 @@
   .stick { position:absolute; bottom:24px; width:140px; height:140px; border-radius:50%; border:2px solid rgba(0,0,0,.25); background:rgba(0,0,0,.04); z-index:7; display:none; touch-action:none; }
   .stick .knob { position:absolute; left:50%; top:50%; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; background:currentColor; opacity:.8; }
   #stick0 { left:24px; color:#f2a900; } #stick1 { right:24px; color:#1a8fe0; }
-  #touchbar { position:absolute; top:8px; right:8px; z-index:7; display:none; gap:6px; }
+  #touchbar { position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:7; display:none; gap:6px; }
   #touchbar button { font-size:16px; padding:6px 10px; }
   .goo { position:absolute; bottom:180px; z-index:7; display:none; font:800 15px system-ui; padding:12px 14px; border-radius:30px; border:0; background:#62d628; color:#103300; }
   #goo0 { left:44px; } #goo1 { right:44px; }
@@ -53,6 +62,7 @@
   <b>Goo</b>: pad A/R1/R2 · P1 <kbd>G</kbd> · P2 <kbd>Enter</kbd> — a hit car is slowed for 1.6 s; a miss leaves a sticky puddle for 5 s.
 </div>
 <div id="settings" class="panel"></div>
+<button id="menuBtn">☰ Menu</button>
 
 <script>
 "use strict";
@@ -69,7 +79,7 @@ const DEFAULTS = {
   p1Mode: 'kid', p1Cap: 40, p1Seat: 'bottom', p1Assist: 60,
   p2Mode: 'adult', p2Cap: 100, p2Seat: 'bottom', p2Assist: 0,
   // AI drivers (race only): off | pro | buddy | learner
-  aiA: 'pro', aiB: 'off', aiC: 'off', aiSkill: 70, aiGrip: 1.2, showRays: false, aiGoo: 'on',
+  nBuddy: 1, nPro: 1, nNN: 0, aiSkill: 70, aiGrip: 1.2, showRays: false, aiGoo: 'on',
   game: 'race',
   corners: null,
 };
@@ -129,39 +139,78 @@ let now = 0; // sim time, seconds
 
 // ---------- robot model ----------
 const ROBOT_SIZE = 0.12, ROBOT_R = 0.07, ROBOT_M = 0.35;
-const COLORS = ['#ffc21a', '#2fa8ff', '#ff5ca8', '#5fe35c'];
-// pretty top-down race car, drawn once per colour (facing +x; 260 px long)
+const COLORS = ['#ffc21a', '#2fa8ff', '#ff3b5c', '#3ddc6a', '#ff7a1a', '#b26bff'];
+// top-down hypercar: wedge nose with a front wing, wide rear haunches, side intakes, bubble canopy,
+// louvred engine cover and a big rear wing on struts. Drawn once per colour, facing +x, ~272 px long.
 const SPRITES = {};
 function shade(hex, f) { const n = parseInt(hex.slice(1), 16), t = f < 0 ? 0 : 255, p = Math.abs(f);
   const c = [n >> 16, n >> 8 & 255, n & 255].map(v => Math.round((t - v) * p + v)); return `rgb(${c})`; }
-function carSprite(color) {
-  if (SPRITES[color]) return SPRITES[color];
-  const W = 300, H = 200, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
-  const rr = (x, y, w, h, r) => { g.beginPath(); g.roundRect(x, y, w, h, r); };
-  g.translate(W/2, H/2);
-  for (const x of [-72, 70]) for (const y of [-60, 60]) {   // tyres with a rim highlight
-    g.fillStyle = '#141519'; rr(x - 25, y - 15, 50, 30, 9); g.fill();
-    g.fillStyle = 'rgba(255,255,255,.22)'; rr(x - 20, y - (y < 0 ? 12 : -6), 40, 6, 3); g.fill(); }
-  const body = () => { g.beginPath(); g.moveTo(-118, -48); g.quadraticCurveTo(-126, 0, -118, 48); g.bezierCurveTo(-60, 64, 40, 64, 92, 44);
-    g.quadraticCurveTo(130, 30, 132, 0); g.quadraticCurveTo(130, -30, 92, -44); g.bezierCurveTo(40, -64, -60, -64, -118, -48); g.closePath(); };
-  body(); const gr = g.createLinearGradient(0, -62, 0, 62);   // rounded paint: light on the crown, dark on the flanks
-  gr.addColorStop(0, shade(color, -0.45)); gr.addColorStop(0.22, shade(color, 0.1)); gr.addColorStop(0.42, shade(color, 0.4)); gr.addColorStop(0.6, color); gr.addColorStop(1, shade(color, -0.5));
-  g.fillStyle = gr; g.fill(); g.lineWidth = 4; g.strokeStyle = shade(color, -0.65); g.stroke();
-  g.save(); body(); g.clip();
-  g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(-140, -15, 280, 9); g.fillRect(-140, 6, 280, 9);   // racing stripes
-  g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(40, -64, 6, 128);                                    // bonnet seam
+function carSprite(color, num) {
+  const key = color + num; if (SPRITES[key]) return SPRITES[key];
+  const W = 320, H = 220, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  g.translate(W/2 - 4, H/2); g.lineJoin = 'round'; g.lineCap = 'round';
+  const carbon = '#16181d', carbon2 = '#2a2e36';
+  const smooth = (P) => {   // closed curve through the midpoints of a polygon
+    g.beginPath(); const n = P.length, mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    let m = mid(P[n - 1], P[0]); g.moveTo(m[0], m[1]);
+    for (let i = 0; i < n; i++) { const q = P[i], m2 = mid(P[i], P[(i + 1) % n]); g.quadraticCurveTo(q[0], q[1], m2[0], m2[1]); }
+    g.closePath(); };
+  const mirror = (top) => top.concat(top.slice().reverse().map(([x, y]) => [x, -y]));
+  // tyres: wide slicks at the back, narrower at the front
+  const tyre = (x, y, w, h) => { g.fillStyle = '#0d0e11'; g.beginPath(); g.roundRect(x - w/2, y - h/2, w, h, 7); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(x - w/2 + 5, y - h/2 + 3, w - 10, 3); };
+  for (const sg of [-1, 1]) { tyre(80, sg*53, 42, 22); tyre(-66, sg*60, 50, 30); }
+  // body shell
+  const BODY = mirror([[146, -6], [138, -18], [118, -28], [100, -46], [80, -54], [58, -50], [34, -42], [8, -44], [-22, -54], [-52, -64], [-84, -64], [-108, -56], [-120, -42], [-124, -16]]);
+  smooth(BODY);
+  const gr = g.createLinearGradient(0, -66, 0, 66);
+  gr.addColorStop(0, shade(color, -0.55)); gr.addColorStop(0.16, shade(color, -0.05)); gr.addColorStop(0.36, shade(color, 0.35));
+  gr.addColorStop(0.5, shade(color, 0.15)); gr.addColorStop(0.7, color); gr.addColorStop(1, shade(color, -0.6));
+  g.fillStyle = gr; g.fill(); g.lineWidth = 3.5; g.strokeStyle = shade(color, -0.7); g.stroke();
+  g.save(); smooth(BODY); g.clip();
+  // fender highlights (makes the haunches bulge)
+  for (const [x, y, r] of [[80, -40, 34], [80, 40, 34], [-66, -46, 42], [-66, 46, 42]]) {
+    const rg = g.createRadialGradient(x, y - 6, 2, x, y, r); rg.addColorStop(0, 'rgba(255,255,255,.38)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = rg; g.fillRect(x - r, y - r, 2*r, 2*r); }
+  // livery: twin stripes with a dark pinline
+  g.fillStyle = 'rgba(255,255,255,.92)'; g.fillRect(-140, -17, 300, 10); g.fillRect(-140, 7, 300, 10);
+  g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(-140, -18, 300, 1.5); g.fillRect(-140, 16.5, 300, 1.5);
+  // side intakes behind the doors
+  for (const sg of [-1, 1]) { g.fillStyle = carbon; g.beginPath(); g.moveTo(-6, sg*46); g.lineTo(-44, sg*60); g.lineTo(-48, sg*48); g.lineTo(-14, sg*38); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.25)'; g.lineWidth = 1.5; g.stroke(); }
+  // engine cover louvres
+  g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 3;
+  for (let x = -54; x >= -100; x -= 9) for (const sg of [-1, 1]) { g.beginPath(); g.moveTo(x, sg*24); g.lineTo(x - 4, sg*40); g.stroke(); }
+  // bonnet vents
+  for (const sg of [-1, 1]) { g.fillStyle = carbon; g.beginPath(); g.moveTo(112, sg*10); g.lineTo(92, sg*30); g.lineTo(84, sg*28); g.lineTo(100, sg*8); g.closePath(); g.fill(); }
+  // gloss sweep
+  const hl = g.createLinearGradient(0, -66, 0, 0); hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.55, 'rgba(255,255,255,.22)'); hl.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = hl; g.fillRect(-140, -66, 300, 60);
   g.restore();
-  g.beginPath(); g.ellipse(-10, 0, 44, 31, 0, 0, 7);   // cockpit glass
-  const gl = g.createLinearGradient(-54, -31, 34, 31); gl.addColorStop(0, '#6c7f98'); gl.addColorStop(0.45, '#1b2433'); gl.addColorStop(1, '#090c12');
-  g.fillStyle = gl; g.fill(); g.strokeStyle = 'rgba(0,0,0,.65)'; g.lineWidth = 3; g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = 5; g.lineCap = 'round'; g.beginPath(); g.ellipse(-10, 0, 33, 22, 0, Math.PI*1.08, Math.PI*1.42); g.stroke();
-  g.fillStyle = '#1b1d22'; rr(-132, -60, 17, 120, 5); g.fill(); g.fillStyle = shade(color, -0.25); rr(-128, -52, 9, 104, 3); g.fill();   // rear wing
-  g.fillStyle = '#fff6c4'; for (const y of [-27, 27]) { g.beginPath(); g.ellipse(120, y, 7, 10, 0, 0, 7); g.fill(); }                 // headlights
-  g.fillStyle = '#ff4a3a'; for (const y of [-40, 40]) { rr(-121, y - 6, 5, 12, 2); g.fill(); }                                       // tail lights
-  g.save(); body(); g.clip(); const hl = g.createLinearGradient(0, -62, 0, -8);   // gloss
-  hl.addColorStop(0, 'rgba(255,255,255,0)'); hl.addColorStop(0.55, 'rgba(255,255,255,.28)'); hl.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = hl; g.fillRect(-140, -62, 280, 54); g.restore();
-  return SPRITES[color] = c;
+  // canopy: dark tinted bubble with a white glare
+  smooth(mirror([[66, -4], [52, -20], [20, -30], [-14, -28], [-36, -18], [-42, -4]]));
+  const gl = g.createLinearGradient(40, -30, -30, 30); gl.addColorStop(0, '#7f94b0'); gl.addColorStop(0.35, '#202a3a'); gl.addColorStop(1, '#06080d');
+  g.fillStyle = gl; g.fill(); g.lineWidth = 3; g.strokeStyle = carbon; g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 4; g.beginPath(); g.moveTo(48, -14); g.quadraticCurveTo(24, -24, -6, -22); g.stroke();
+  // number roundel on the nose
+  g.fillStyle = '#fff'; g.beginPath(); g.arc(-74, 0, 15, 0, 7); g.fill(); g.lineWidth = 2.5; g.strokeStyle = carbon; g.stroke();
+  g.save(); g.translate(-74, 0); g.rotate(Math.PI/2); g.fillStyle = carbon; g.font = '900 20px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(num, 0, 1); g.restore();
+  // front wing / splitter with coloured endplates
+  g.fillStyle = carbon; g.beginPath(); g.roundRect(134, -60, 14, 120, 5); g.fill();
+  g.fillStyle = carbon2; g.fillRect(137, -54, 5, 108);
+  for (const sg of [-1, 1]) { g.fillStyle = color; g.beginPath(); g.roundRect(128, sg > 0 ? 52 : -64, 24, 12, 3); g.fill(); g.strokeStyle = carbon; g.lineWidth = 2; g.stroke(); }
+  // headlights: slim and angry
+  g.strokeStyle = '#eaffff'; g.lineWidth = 5;
+  for (const sg of [-1, 1]) { g.beginPath(); g.moveTo(126, sg*20); g.lineTo(108, sg*36); g.stroke(); }
+  // rear wing on two struts, wider than the car, with endplates
+  g.fillStyle = carbon; for (const sg of [-1, 1]) g.fillRect(-114, sg*22 - 3, 16, 6);
+  const wg = g.createLinearGradient(-140, 0, -112, 0); wg.addColorStop(0, '#0b0c10'); wg.addColorStop(0.5, '#3a3f49'); wg.addColorStop(1, '#14161b');
+  g.fillStyle = wg; g.beginPath(); g.roundRect(-142, -76, 30, 152, 6); g.fill();
+  g.fillStyle = color; g.fillRect(-120, -70, 5, 140);   // coloured gurney flap
+  for (const sg of [-1, 1]) { g.fillStyle = shade(color, -0.25); g.beginPath(); g.roundRect(-148, sg > 0 ? 70 : -82, 42, 12, 3); g.fill(); g.strokeStyle = carbon; g.lineWidth = 2; g.stroke(); }
+  // tail lights and diffuser
+  g.fillStyle = '#ff2a2a'; for (const sg of [-1, 1]) { g.beginPath(); g.roundRect(-126, sg*34 - 8, 5, 16, 2); g.fill(); }
+  return SPRITES[key] = c;
 }
 class Robot {
   constructor(i, ai) { this.i = i; this.ai = ai || null; this.color = COLORS[i]; this.m = ROBOT_M; this.r = ROBOT_R; this.reset(); }
@@ -258,7 +307,7 @@ class Robot {
     ctx.strokeStyle = 'rgba(150,150,150,.9)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.arc(W2S(s.x), W2S(s.y), W2S(this.r), 0, 7); ctx.stroke(); ctx.setLineDash([]);
     ctx.save(); ctx.translate(W2S(this.x), W2S(this.y)); ctx.rotate(this.th);
-    const h = W2S(ROBOT_SIZE) / 2, spr = carSprite(this.color), k = W2S(0.138) / 260;
+    const h = W2S(ROBOT_SIZE) / 2, spr = carSprite(this.color, this.i + 1), k = W2S(0.15) / 296;
     // soft shadow cast down-right (canvas shadow offsets ignore the rotation, so it stays put like a real light)
     if (now < this.boostUntil) { ctx.shadowColor = 'rgba(255,240,150,.95)'; ctx.shadowBlur = W2S(0.03); }
     else { ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = W2S(0.012); ctx.shadowOffsetX = W2S(0.006); ctx.shadowOffsetY = W2S(0.012); }
@@ -488,7 +537,7 @@ const Race = {
     ctx.save(); ctx.translate(W2S(q.x), W2S(q.y)); ctx.rotate(q.a);
     for (let k = 0; k < 8; k++) for (let j = 0; j < 2; j++) { ctx.fillStyle = (k+j)%2 ? '#fff' : '#111'; ctx.fillRect(W2S(j*sq - sq), W2S(-t.tw/2 + k*sq), W2S(sq), W2S(sq)); }
     ctx.restore();
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 6; i++) {
       const g = t.at(this.s0 - 0.18 - i*0.16), off = (i % 2 ? -1 : 1) * t.tw * 0.22;
       ctx.save(); ctx.translate(W2S(g.x - Math.sin(g.a)*off), W2S(g.y + Math.cos(g.a)*off)); ctx.rotate(g.a);
       ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.beginPath();
@@ -911,6 +960,8 @@ function hotkey(e) {
 function syncUI() {
   $('help').style.display = showHelp ? 'block' : 'none';
   $('settings').style.display = showSettings ? 'block' : 'none';
+  $('menuBtn').style.display = showSettings ? 'none' : 'block';
+  if (showSettings) buildSettings();
   $('budget').style.display = showBudget ? 'block' : 'none';
   document.querySelectorAll('.corner').forEach(c => c.style.display = calib ? 'block' : 'none');
 }
@@ -922,41 +973,58 @@ const SLIDERS = [
   ['Player 2', [['p2Cap','Speed cap (%)',10,100,5], ['p2Assist','Track assist (%)',0,100,5]]],
   ['AI drivers (race)', [['aiSkill','AI top speed (%)',20,100,5], ['aiGrip','AI corner grip (m/s²)',0.3,4,0.1]]],
 ];
+let menuTab = 'game';
 function buildSettings() {
-  let h = '<b>Settings</b> <button id="defaults">reset all</button>';
-  for (const [title, list] of SLIDERS) {
-    h += `<h3>${title}</h3>`;
-    if (title.startsWith('Player')) {
-      const p = title.endsWith('1') ? 'p1' : 'p2';
-      h += `<div class="row"><label>Mode</label><select data-k="${p}Mode"><option value="kid">kid: where I point</option><option value="adult">robot-relative</option></select></div>`;
-      h += `<div class="row"><label>Sits at</label><select data-k="${p}Seat"><option>bottom</option><option>top</option><option>left</option><option>right</option></select></div>`;
+  const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
+  const sel = (k, label, opts) => `<div class="row"><label>${label}</label><select data-k="${k}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
+  const step = (k, label, hint) => `<div class="row step"><label>${label}<small>${hint}</small></label><button data-step="${k}" data-d="-1">−</button><span class="n">${S[k]}</span><button data-step="${k}" data-d="1">+</button></div>`;
+  let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button></div><button id="menuClose">✕</button></div>`;
+  if (menuTab === 'game') {
+    h += `<h3>Game</h3><div class="row"><button data-game="race" class="${S.game === 'race' ? 'on' : ''}">Race</button><button data-game="ball" class="${S.game === 'ball' ? 'on' : ''}">Ball</button><button data-act="reset">Restart</button></div>`;
+    h += sel('track', 'Track', [['auto', 'auto (fits the floor)'], ...LAYOUT_NAMES.map(n => [n, n])]);
+    h += `<h3>Cars on the track <span class="dim">${carCount()} / ${MAX_CARS}</span></h3>`;
+    h += step('players', 'Humans', 'pad / keys / touch');
+    h += step('nBuddy', 'BUDDY', 'plays with the kid');
+    h += step('nPro', 'PRO', 'races to win');
+    h += step('nNN', 'NN', `neural net · gen ${BRAIN.gen || 0}`);
+    for (const p of ['p1', 'p2'].slice(0, S.players)) {
+      h += `<h3>Player ${p.at(-1)}</h3>`;
+      h += sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]);
+      h += sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]);
+      h += sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
     }
-    if (title.startsWith('AI')) {
-      for (const k of ['aiA', 'aiB', 'aiC']) h += `<div class="row"><label>AI car ${k.at(-1)}</label><select data-k="${k}"><option value="off">off</option><option value="pro">PRO (racer)</option><option value="buddy">BUDDY (plays with the kid)</option><option value="learner">NN (learns, N = train)</option></select></div>`;
-      h += `<div class="row"><label>AI shoots goo</label><select data-k="aiGoo"><option value="on">yes</option><option value="off">no</option></select></div>`;
-      h += `<div class="row"><button id="trainBtn">Train NN (N)</button><button id="brainReset">Forget NN</button></div>`;
-    }
-    if (title === 'Floor') h += `<div class="row"><label>Players</label><select data-k="players" data-num="1"><option>1</option><option>2</option></select></div>`
-      + `<div class="row"><label>Track</label><select data-k="track"><option value="auto">auto (fits the floor)</option>${LAYOUT_NAMES.map(n => `<option>${n}</option>`).join('')}</select></div>`;
-    for (const [k, label, mn, mx, st] of list)
-      h += `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
+    h += `<h3>AI drivers</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sl('aiGrip', 'Corner grip (m/s²)', 0.3, 4, 0.1);
+    h += sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) + sel('showRays', 'Show what AI sees', [['false', 'no'], ['true', 'yes']]);
+    h += `<div class="row"><button id="trainBtn">${Trainer.on ? 'Stop training' : 'Train NN'} (N)</button><button id="brainReset">Forget NN</button></div>`;
+  } else {
+    h += `<h3>Floor</h3>` + sl('arenaW', 'Projected width (m)', 0.5, 6, 0.01) + sl('trackW', 'Track width (m)', 0.18, 0.5, 0.01);
+    h += `<h3>Robot (KS0426 guesses)</h3>` + sl('maxSpeed', 'Top speed (m/s)', 0.1, 2, 0.05) + sl('maxAccel', 'Accel (m/s²)', 0.2, 8, 0.1) + sl('maxTurn', 'Turn rate (rad/s)', 0.5, 10, 0.1) + sl('slip', 'Wheel slip', 0, 0.5, 0.01);
+    h += `<h3>Latency chain</h3>` + sl('btMs', 'Bluetooth (ms)', 0, 300, 1) + sl('camFps', 'Camera fps', 5, 120, 1) + sl('captureMs', 'Capture (ms)', 0, 2000, 1) + sl('detectMs', 'Detection (ms)', 0, 100, 1) + sl('decideMs', 'Decision (ms)', 0, 50, 1) + sl('camNoiseCm', 'Camera noise (cm)', 0, 5, 0.1) + sl('dropPct', 'Dropped frames (%)', 0, 50, 1);
+    h += `<p class="dim">Tapo RTSP ≈ capture 1500 ms. USB 60 fps ≈ 25 ms.</p><div class="row"><button id="defaults">Reset everything</button></div>`;
   }
-  h += '<p style="color:#999;font-size:12px">Tapo RTSP ≈ capture 1500 ms. USB 60 fps ≈ 25 ms. Try both in the race with assist on.</p>';
-  $('settings').innerHTML = h;
-  $('settings').querySelectorAll('[data-k]').forEach(el => {
-    const k = el.dataset.k; el.value = S[k];
+  const el = $('settings'); el.innerHTML = h;
+  el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { menuTab = b.dataset.tab; buildSettings(); });
+  el.querySelectorAll('[data-game]').forEach(b => b.onclick = () => { setGame(b.dataset.game); buildSettings(); });
+  el.querySelectorAll('[data-act="reset"]').forEach(b => b.onclick = () => setGame(S.game));
+  el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => {
+    const k = b.dataset.step, d = +b.dataset.d, v = S[k] + d;
+    if (v < 0 || (k === 'players' && v > 2) || (d > 0 && carCount() >= MAX_CARS) || (d < 0 && carCount() <= 1)) return;
+    S[k] = v; save(); makeRobots(); buildSettings();
+  });
+  $('menuClose').onclick = () => { showSettings = false; syncUI(); };
+  el.querySelectorAll('[data-k]').forEach(inp => {
+    const k = inp.dataset.k; inp.value = String(S[k]);
     const show = () => { const v = $('v_' + k); if (v) v.textContent = S[k]; };
     show();
-    el.addEventListener('input', () => {
-      S[k] = el.type === 'range' || el.dataset.num ? +el.value : el.value; show(); save();
+    inp.addEventListener('input', () => {
+      S[k] = inp.type === 'range' ? +inp.value : k === 'showRays' ? inp.value === 'true' : inp.value; show(); save();
       if (k === 'arenaW') { resize(); setGame(S.game); }
       if (k === 'trackW' || k === 'track') setGame(S.game);
-      if (k === 'players' || k.startsWith('ai') && k.length === 3) makeRobots();
+      if (k.endsWith('Mode')) makeRobots();
     });
   });
-  $('trainBtn').onclick = () => Trainer.toggle();
-  $('brainReset').onclick = () => { Trainer.reset(); makeRobots(); };
-  $('defaults').onclick = () => { S = Object.assign({}, DEFAULTS); save(); resize(); buildSettings(); setGame(S.game); };
+  if ($('trainBtn')) { $('trainBtn').onclick = () => { Trainer.toggle(); buildSettings(); }; $('brainReset').onclick = () => { Trainer.reset(); makeRobots(); buildSettings(); }; }
+  if ($('defaults')) $('defaults').onclick = () => { S = Object.assign({}, DEFAULTS); save(); resize(); setGame(S.game); buildSettings(); };
 }
 function budgetHTML() {
   const frame = 1000 / S.camFps;
@@ -985,11 +1053,14 @@ function drawCalib() {
 
 // ---------- main ----------
 let game, robots = [];
+const MAX_CARS = 6, carCount = () => S.players + S.nBuddy + S.nPro + S.nNN;
 function makeRobots() {
   robots = []; for (let i = 0; i < S.players; i++) robots.push(new Robot(i));
-  if (game === Race) for (const k of ['aiA', 'aiB', 'aiC']) if (S[k] !== 'off' && robots.length < 4) robots.push(new Robot(robots.length, makeAI(S[k])));
+  if (game === Race) for (const [k, kind] of [['nBuddy', 'buddy'], ['nPro', 'pro'], ['nNN', 'learner']])
+    for (let j = 0; j < S[k] && robots.length < MAX_CARS; j++) robots.push(new Robot(robots.length, makeAI(kind)));
 }
 function setGame(name) { S.game = name; save(); game = GAMES[name]; game.init(); makeRobots(); if (Trainer.on) Trainer.startGen(); if (game !== Race) Trainer.on = false; }
+$('menuBtn').onclick = () => { showSettings = true; syncUI(); };
 if (isTouch) { showHelp = false; document.querySelectorAll('.stick, .goo').forEach(s => s.style.display = 'block'); $('touchbar').style.display = 'flex'; }
 resize(); setGame(S.game in GAMES ? S.game : 'race'); buildSettings(); syncUI();
 
