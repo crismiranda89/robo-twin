@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste da câmara</title>
+<style>
+  :root { --bg:#f6f4ef; --fg:#22252b; --muted:#6b6f78; --panel:#fff; --line:#d9d5cc; --accent:#1a73c9; --ok:#1f8a4c; --warn:#c26a00; --bad:#c62828; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui,sans-serif; }
+  body { display:flex; gap:12px; padding:12px; box-sizing:border-box; }
+  #stage { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
+  #wrap { position:relative; flex:1; min-height:0; background:#111; border-radius:10px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  #view { max-width:100%; max-height:100%; cursor:crosshair; }
+  #empty { position:absolute; color:#bbb; text-align:center; padding:20px; }
+  aside { width:330px; flex:none; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  h3 { margin:0 0 6px; font-size:12px; color:var(--accent); text-transform:uppercase; letter-spacing:.05em; }
+  .row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .row label { flex:1; }
+  .row input[type=range] { width:130px; }
+  .v { width:52px; text-align:right; font-variant-numeric:tabular-nums; }
+  select, button { font:inherit; background:#fff; color:var(--fg); border:1px solid #c9c4b8; border-radius:5px; padding:3px 8px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  ul { margin:4px 0 0; padding-left:18px; } li { margin:2px 0; }
+  .bar { height:8px; background:#ebe7de; border-radius:4px; overflow:hidden; } .bar i { display:block; height:100%; background:var(--accent); }
+  #pad .axes { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; font-variant-numeric:tabular-nums; font-size:12px; }
+  #pad .btns { display:flex; flex-wrap:wrap; gap:3px; margin-top:6px; }
+  #pad .btns span { width:22px; height:18px; font-size:11px; text-align:center; border-radius:3px; background:#ebe7de; }
+  #pad .btns span.on { background:var(--accent); color:#fff; }
+  @media (max-width:800px) { body { flex-direction:column; height:auto; } aside { width:auto; } #wrap { min-height:50vh; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="row"><h1 style="flex:1">Teste da câmara</h1>
+    <select id="camSel"></select><button id="start" class="primary">Ligar câmara</button></div>
+  <div id="wrap"><canvas id="view"></canvas><div id="empty">Carrega em «Ligar câmara» e autoriza o acesso.</div></div>
+  <div class="muted">Clica nos 4 cantos da imagem projetada, por esta ordem: <b>cima-esquerda, cima-direita, baixo-direita, baixo-esquerda</b>. «Cima» é o lado de cima do jogo.</div>
+</div>
+<aside>
+  <div class="card"><h3>Cobertura</h3><div id="cover" class="muted">Ainda sem cantos marcados.</div>
+    <div class="row" style="margin-top:6px"><button id="clear">Apagar cantos</button></div></div>
+  <div class="card"><h3>Luz</h3>
+    <div class="row"><label>Brilho médio</label><span class="v" id="mean">–</span></div><div class="bar"><i id="meanBar" style="width:0"></i></div>
+    <div class="row"><label>Píxeis saturados</label><span class="v" id="sat">–</span></div>
+    <div id="lightMsg" class="muted"></div></div>
+  <div class="card"><h3>Pontos de luz (LEDs)</h3>
+    <div class="row"><label>Limiar</label><input type="range" id="thr" min="150" max="255" value="240"><span class="v" id="thrV">240</span></div>
+    <div class="row"><label>Tamanho mínimo (px)</label><input type="range" id="minA" min="1" max="60" value="4"><span class="v" id="minAV">4</span></div>
+    <div id="blobs" class="muted">Testa com a lanterna do telemóvel no chão: deve aparecer um círculo vermelho só nesse ponto.</div></div>
+  <div class="card"><h3>Controlos da câmara</h3><div id="ctl" class="muted">Liga a câmara primeiro.</div></div>
+  <div class="card" id="pad"><h3>Comando</h3><div id="padInfo" class="muted">Carrega num botão do comando para ele aparecer.</div></div>
+</aside>
+<video id="vid" playsinline muted style="display:none"></video>
+<script>
+const $ = id => document.getElementById(id);
+const vid = $('vid'), view = $('view'), vx = view.getContext('2d');
+const A = document.createElement('canvas'), ax = A.getContext('2d', { willReadFrequently: true });
+let stream = null, corners = [], blobs = [];
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const game = lsGet('robotwin2', {}), arenaW = game.arenaW || 2.0;
+corners = lsGet('robotwin-cam-corners', []);
+
+async function listCams() {
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const prev = lsGet('robotwin-cam-id', '');
+  $('camSel').innerHTML = devs.map((d, i) => `<option value="${d.deviceId}">${d.label || 'Câmara ' + (i + 1)}</option>`).join('');
+  const pick = devs.find(d => d.deviceId === prev) || devs.find(d => /c270|logitech|usb/i.test(d.label));
+  if (pick) $('camSel').value = pick.deviceId;
+}
+async function start() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const id = $('camSel').value;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: id ? { exact: id } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
+  } catch (e) { $('empty').textContent = 'Não consegui abrir a câmara: ' + e.message; return; }
+  vid.srcObject = stream; await vid.play();
+  $('empty').style.display = 'none';
+  await listCams();
+  const track = stream.getVideoTracks()[0], s = track.getSettings();
+  if (s.deviceId) { $('camSel').value = s.deviceId; lsSet('robotwin-cam-id', s.deviceId); }
+  buildControls(track);
+}
+function buildControls(track) {
+  const caps = track.getCapabilities ? track.getCapabilities() : {}, set = track.getSettings(), el = $('ctl');
+  const s = track.getSettings();
+  let html = `<div class="row"><label>Resolução</label><span>${s.width}×${s.height} @ ${Math.round(s.frameRate || 0)} fps</span></div>`;
+  const ranges = [['exposureTime', 'Exposição'], ['brightness', 'Brilho'], ['contrast', 'Contraste'], ['saturation', 'Saturação'], ['focusDistance', 'Foco'], ['colorTemperature', 'Temp. de cor']];
+  if (caps.exposureMode && caps.exposureMode.includes('manual'))
+    html += `<div class="row"><label>Exposição automática</label><input type="checkbox" id="c_expAuto" ${set.exposureMode !== 'manual' ? 'checked' : ''}></div>`;
+  let any = false;
+  for (const [k, label] of ranges) if (caps[k] && caps[k].max > caps[k].min) {
+    any = true; const c = caps[k];
+    html += `<div class="row"><label>${label}</label><input type="range" id="c_${k}" min="${c.min}" max="${c.max}" step="${c.step || 1}" value="${set[k] ?? c.min}"><span class="v" id="c_${k}V">${Math.round(set[k] ?? c.min)}</span></div>`;
+  }
+  if (!any && !caps.exposureMode) html += `<div class="muted">Este browser não deixa mexer na exposição desta câmara. No Mac isso faz-se fora do browser; para este teste não é preciso.</div>`;
+  el.innerHTML = html;
+  const auto = $('c_expAuto');
+  if (auto) auto.onchange = () => track.applyConstraints({ advanced: [{ exposureMode: auto.checked ? 'continuous' : 'manual' }] }).catch(e => alert(e.message));
+  for (const [k] of ranges) { const r = $('c_' + k); if (!r) continue;
+    r.oninput = () => { $('c_' + k + 'V').textContent = Math.round(+r.value);
+      const adv = { [k]: +r.value }; if (k === 'exposureTime') adv.exposureMode = 'manual'; if (k === 'focusDistance') adv.focusMode = 'manual';
+      if (k === 'exposureTime' && auto) auto.checked = false;
+      track.applyConstraints({ advanced: [adv] }).catch(() => {}); }; }
+}
+
+// ---- corners / coverage ----
+view.addEventListener('click', e => {
+  if (!stream) return;
+  const r = view.getBoundingClientRect(), x = (e.clientX - r.left) * view.width / r.width, y = (e.clientY - r.top) * view.height / r.height;
+  if (corners.length >= 4) corners = [];
+  corners.push([x / view.width, y / view.height]); lsSet('robotwin-cam-corners', corners); coverage();
+});
+$('clear').onclick = () => { corners = []; lsSet('robotwin-cam-corners', corners); coverage(); };
+function coverage() {
+  const el = $('cover');
+  if (corners.length < 4) { el.className = 'muted'; el.textContent = corners.length ? `Faltam ${4 - corners.length} cantos.` : 'Ainda sem cantos marcados.'; return; }
+  const W = vid.videoWidth || 1280, H = vid.videoHeight || 720, P = corners.map(([u, v]) => [u * W, v * H]);
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const top = d(P[0], P[1]), bot = d(P[3], P[2]), left = d(P[0], P[3]), right = d(P[1], P[2]);
+  const worst = Math.min(top, bot) / arenaW, best = Math.max(top, bot) / arenaW; // px per metre
+  const margin = Math.min(...P.map(([x, y]) => Math.min(x, y, W - x, H - y)));
+  const car = 0.12 * worst, edge = margin < W * 0.015;
+  const lines = [];
+  lines.push(edge ? `<li class="warn">Há um canto encostado ao limite da imagem: a câmara pode estar a cortar a projeção. Afasta-a ou aponta-a mais ao centro.</li>`
+                  : `<li class="ok">A projeção inteira cabe na imagem da câmara (margem de ${Math.round(margin)} px).</li>`);
+  lines.push(`<li>Resolução no chão: ${Math.round(worst)}–${Math.round(best)} px por metro (com «Projected width» = ${arenaW.toFixed(2)} m).</li>`);
+  lines.push(`<li class="${car >= 20 ? 'ok' : car >= 10 ? 'warn' : 'bad'}">Um carro de 12 cm fica com ~${Math.round(car)} px no sítio pior ${car >= 20 ? '— chega bem.' : car >= 10 ? '— dá, mas à justa.' : '— pouco; aproxima a câmara.'}</li>`);
+  if (best / worst > 1.6) lines.push(`<li class="warn">A câmara vê muito na diagonal (um lado ${(best / worst).toFixed(1)}× maior que o outro). Funciona, mas o lado longe tem menos detalhe.</li>`);
+  lines.push(`<li class="muted">Proporção vista: ${(Math.max(top, bot) / Math.max(left, right)).toFixed(2)} (a imagem projetada é 16:9 ≈ 1.78 se o ecrã for 16:9; o valor muda com a perspetiva).</li>`);
+  el.className = ''; el.innerHTML = `<ul>${lines.join('')}</ul>`;
+}
+
+// ---- per-frame analysis ----
+function analyse() {
+  const W = 320, H = Math.round(W * vid.videoHeight / vid.videoWidth);
+  if (A.width !== W) { A.width = W; A.height = H; }
+  ax.drawImage(vid, 0, 0, W, H);
+  const d = ax.getImageData(0, 0, W, H).data, n = W * H, thr = +$('thr').value, minA = +$('minA').value;
+  const L = new Float32Array(n); let sum = 0, sat = 0;
+  for (let i = 0, j = 0; i < n; i++, j += 4) { const l = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2]; L[i] = l; sum += l; if (d[j] > 250 || d[j + 1] > 250 || d[j + 2] > 250) sat++; }
+  const mean = sum / n, satP = 100 * sat / n;
+  $('mean').textContent = Math.round(mean); $('meanBar').style.width = (mean / 255 * 100) + '%'; $('sat').textContent = satP.toFixed(1) + '%';
+  $('lightMsg').innerHTML = satP > 8 ? '<span class="warn">Muita área a branco puro: a projeção está a encandear a câmara. Baixa a exposição/brilho se der.</span>'
+    : mean < 40 ? '<span class="warn">Imagem escura. Sobe a exposição ou o brilho.</span>' : '<span class="ok">Luz boa para detetar.</span>';
+  // bright blobs (flood fill)
+  const seen = new Uint8Array(n), out = [], st = [];
+  for (let i = 0; i < n; i++) {
+    if (seen[i] || L[i] < thr) continue;
+    let a = 0, sx = 0, sy = 0; st.push(i); seen[i] = 1;
+    while (st.length) { const k = st.pop(), x = k % W, y = (k / W) | 0; a++; sx += x; sy += y;
+      for (const q of [k - 1, k + 1, k - W, k + W]) if (q >= 0 && q < n && !seen[q] && L[q] >= thr && Math.abs((q % W) - x) <= 1) { seen[q] = 1; st.push(q); } }
+    if (a >= minA) out.push({ x: sx / a / W, y: sy / a / H, a });
+  }
+  out.sort((p, q) => q.a - p.a); blobs = out.slice(0, 30);
+  $('blobs').innerHTML = blobs.length === 0 ? 'Nenhum ponto acima do limiar.'
+    : blobs.length > 12 ? `<span class="warn">${out.length} pontos — demasiados: a projeção tem zonas tão claras como um LED. Sobe o limiar ou baixa a exposição.</span>`
+    : `<span class="ok">${out.length} ponto(s) de luz.</span>`;
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  pollPad();
+  if (!stream || vid.readyState < 2) return;
+  if (view.width !== vid.videoWidth) { view.width = vid.videoWidth; view.height = vid.videoHeight; coverage(); }
+  const W = view.width, H = view.height;
+  vx.drawImage(vid, 0, 0, W, H);
+  analyse();
+  for (const b of blobs) { vx.strokeStyle = '#ff2a2a'; vx.lineWidth = 3; vx.beginPath(); vx.arc(b.x * W, b.y * H, Math.max(10, Math.sqrt(b.a) * 4), 0, 7); vx.stroke(); }
+  if (corners.length) {
+    vx.lineWidth = 3; vx.strokeStyle = '#ffd400'; vx.fillStyle = 'rgba(255,212,0,.12)'; vx.beginPath();
+    corners.forEach(([u, v], i) => i ? vx.lineTo(u * W, v * H) : vx.moveTo(u * W, v * H));
+    if (corners.length === 4) { vx.closePath(); vx.fill(); } vx.stroke();
+    const names = ['1 cima-esq', '2 cima-dir', '3 baixo-dir', '4 baixo-esq'];
+    vx.font = 'bold 20px system-ui';
+    corners.forEach(([u, v], i) => { vx.fillStyle = '#ffd400'; vx.beginPath(); vx.arc(u * W, v * H, 8, 0, 7); vx.fill(); vx.fillStyle = '#000'; vx.fillText(names[i], u * W + 12, v * H - 10); vx.fillStyle = '#ffd400'; vx.fillText(names[i], u * W + 11, v * H - 11); });
+  }
+}
+
+// ---- gamepad ----
+function pollPad() {
+  const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean);
+  if (!pads.length) return;
+  $('padInfo').innerHTML = pads.map(p => `<div><b>${p.index}:</b> ${p.id.replace(/</g, '&lt;')} <span class="muted">(${p.mapping || 'sem mapeamento'})</span></div>
+    <div class="axes">${p.axes.map((a, i) => `<span>E${i}: ${a.toFixed(2)}</span>`).join('')}</div>
+    <div class="btns">${p.buttons.map((b, i) => `<span class="${b.pressed ? 'on' : ''}">${i}</span>`).join('')}</div>`).join('<hr>');
+}
+
+$('thr').oninput = () => $('thrV').textContent = $('thr').value;
+$('minA').oninput = () => $('minAV').textContent = $('minA').value;
+$('start').onclick = start;
+$('camSel').onchange = () => stream && start();
+listCams().catch(() => {});
+frame();
+</script>
+</body>
+</html>
