@@ -978,7 +978,7 @@ function buildSettings() {
   const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
   const sel = (k, label, opts) => `<div class="row"><label>${label}</label><select data-k="${k}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
   const step = (k, label, hint) => `<div class="row step"><label>${label}<small>${hint}</small></label><button data-step="${k}" data-d="-1">−</button><span class="n">${S[k]}</span><button data-step="${k}" data-d="1">+</button></div>`;
-  let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button></div><button id="menuClose">✕</button></div>`;
+  let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button></div><a href="https://192.168.68.200:8444/inicio" title="Voltar à página de início da casa" style="color:inherit;text-decoration:none;font-size:13px;opacity:.8;margin-left:auto;margin-right:10px">← Início</a><button id="menuClose">✕</button></div>`;
   if (menuTab === 'game') {
     h += `<h3>Game</h3><div class="row"><button data-game="race" class="${S.game === 'race' ? 'on' : ''}">Race</button><button data-game="ball" class="${S.game === 'ball' ? 'on' : ''}">Ball</button><button data-act="reset">Restart</button></div>`;
     h += sel('track', 'Track', [['auto', 'auto (fits the floor)'], ...LAYOUT_NAMES.map(n => [n, n])]);
