@@ -46,12 +46,13 @@ import * as THREE from 'three';
 
 // ---------------- settings ----------------
 const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' },
-  long: { w: 3.8, track: 'loop', name: 'Longa', laps: 3 }, xl: { w: 4.8, track: 'loop', name: 'Muito longa', laps: 2 } };
-const DEF = { tiltMode: 'a', size: 'long', arenaW: 3.8, track: 'grandprix', players: 1, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
+  long: { w: 5.5, track: 'loop', name: 'Longa', laps: 3 }, xl: { w: 7.0, track: 'loop', name: 'Muito longa', laps: 2 } };   // 3D view: the camera zooms in to fill the screen, so the world is wider
+const DEF = { bg: 'black', tiltMode: 'd', size: 'long', arenaW: 5.5, track: 'loop', players: 1, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
   p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
-if ((S.v || 0) < 3) { Object.assign(S, { v: 3, size: 'long', arenaW: 3.8, track: 'loop', laps: 3, tiltMode: 'a', view: 'tilt' }); }   // one-off: switch to the long, narrow-looking track
+if ((S.v || 0) < 3) Object.assign(S, { size: 'long', track: 'loop', laps: 3, view: 'tilt' });   // one-off: switch to the long track
+if ((S.v || 0) < 5) { S.tiltMode = 'd'; S.bg = 'black'; if (SIZES[S.size]) S.arenaW = SIZES[S.size].w; if (S.size === 'long' || S.size === 'xl') S.track = 'loop'; S.v = 5; }
 const save = () => { try { localStorage.setItem('robogp3d', JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -97,7 +98,7 @@ const TILT_MODES = {
   a: { name: 'A · Pista + cenário inteiro', pitch: 54, rect: 'arena', how: 'contain' },
   b: { name: 'B · Pista grande', pitch: 48, rect: 'track', how: 'contain' },
   c: { name: 'C · Mais de cima', pitch: 72, rect: 'track', how: 'contain' },
-  d: { name: 'D · Sem margens (enche tudo)', pitch: 60, rect: 'arena', how: 'cover' },
+  d: { name: 'D · Sem margens (enche tudo)', pitch: 54, rect: 'arena', how: 'cover' },
 };
 function fitTilt(mode) {
   const M = TILT_MODES[mode] || TILT_MODES.b, pitch = M.pitch * Math.PI / 180;
@@ -154,8 +155,22 @@ const LAYOUTS = {
   snake: [[0.20,0.88],[0.48,0.90],[0.76,0.88],[0.94,0.62],[0.90,0.22],[0.76,0.10],[0.64,0.24],[0.60,0.46],[0.46,0.52],[0.38,0.34],[0.32,0.12],[0.16,0.12],[0.06,0.36],[0.07,0.66]],
 };
 const wrapD = (d, per) => ((d + per/2) % per + per) % per - per/2;
+// 3D view: the camera is fitted first (screen fully covered by the arena), then the track is laid out inside exactly what
+// the screen shows — the visible ground is a trapezoid, so the track reaches the left, right, top and bottom edges.
+const TILT = S.view === 'tilt';
+let QUAD = null;
+if (TILT) { S.tiltMode = 'd'; fitTilt('d');
+  const hit = (nx, ny) => { const v = new THREE.Vector3(nx, ny, 0.5).unproject(camTilt).sub(camTilt.position).normalize(), t = -camTilt.position.y / v.y; return [camTilt.position.x + v.x*t, camTilt.position.z + v.z*t]; };
+  QUAD = { FL: hit(-1, 1), FR: hit(1, 1), NL: hit(-1, -1), NR: hit(1, -1) }; }
+const inView = (x, z, pad = 0.02) => { if (!TILT) return true; const p = new THREE.Vector3(x, 0, z).project(camTilt); return Math.abs(p.x) < 1 + pad && Math.abs(p.y) < 1 + pad; };
+function mapUV(u, v, m) {
+  if (!QUAD) return [m + u*(AW-2*m), m + v*(AH-2*m)];
+  const { FL, FR, NL, NR } = QUAD, iu = m / Math.hypot(NR[0] - NL[0], NR[1] - NL[1]), iv = m / Math.hypot(NL[0] - FL[0], NL[1] - FL[1]);
+  const uu = iu + u * (1 - 2*iu), vv = iv + v * (1 - 2*iv), lerp = (a, b, t) => [a[0] + (b[0] - a[0])*t, a[1] + (b[1] - a[1])*t];
+  return lerp(lerp(FL, FR, uu), lerp(NL, NR, uu), vv);
+}
 function buildTrack(name) {
-  const tw = TWID, m = 0.05 + tw/2, P = LAYOUTS[name].map(([u,v]) => [m + u*(AW-2*m), m + v*(AH-2*m)]), n = P.length, pts = [];
+  const tw = TWID, m = 0.07 + tw/2, P = LAYOUTS[name].map(([u,v]) => mapUV(u, v, m)), n = P.length, pts = [];
   for (let i = 0; i < n; i++) { const p0 = P[(i-1+n)%n], p1 = P[i], p2 = P[(i+1)%n], p3 = P[(i+2)%n];
     for (let k = 0; k < 40; k++) { const t = k/40, t2 = t*t, t3 = t2*t, f = (a,b,c,d) => 0.5*((2*b) + (-a+c)*t + (2*a-5*b+4*c-d)*t2 + (-a+3*b-3*c+d)*t3);
       pts.push({ x: f(p0[0],p1[0],p2[0],p3[0]), y: f(p0[1],p1[1],p2[1],p3[1]) }); } }
@@ -176,13 +191,15 @@ function buildTrack(name) {
   return { name, tw, per, pts, N, K, at, locate, curv: s => K[idx(s)], minSep };
 }
 const T = buildTrack(LAYOUTS[S.track] ? S.track : 'bean'), S0 = Math.min(0.9, T.per * 0.08);
-fitTilt(S.tiltMode);
+if (!TILT) fitTilt(S.tiltMode);
 const R = seeded(77 + Math.round(T.per * 100));
 
 // ---------------- scenery plan (positions first: some of it is painted on the ground) ----------------
 const placed = [];
 const trackD = (x, z) => T.locate({ x, y: z }, null).d;
-const clear = (x, z, r, edge = 0) => x > edge && z > edge && x < AW - edge && z < AH - edge && trackD(x, z) > T.tw/2 + 0.035 + r && placed.every(p => Math.hypot(p.x - x, p.z - z) > p.r + r);
+const BLACK = TILT && S.bg === 'black', BAND = 0.26;   // black background: only a band of scenery around the track
+const nearTrack = (x, z) => !BLACK || trackD(x, z) < T.tw/2 + BAND;
+const clear = (x, z, r, edge = 0) => x > edge && z > edge && x < AW - edge && z < AH - edge && inView(x, z) && trackD(x, z) > T.tw/2 + 0.035 + r && nearTrack(x, z) && placed.every(p => Math.hypot(p.x - x, p.z - z) > p.r + r);
 function tryPlace(r, edge = r, tries = 400) { for (let k = 0; k < tries; k++) { const x = R()*AW, z = R()*AH; if (clear(x, z, r, edge)) { placed.push({ x, z, r }); return { x, z }; } } return null; }
 const plan = { stand: tryPlace(0.13), pond: tryPlace(0.1), logo: tryPlace(0.12), tents: [tryPlace(0.05), tryPlace(0.05), tryPlace(0.05)].filter(Boolean) };
 
@@ -225,6 +242,11 @@ const ground = document.createElement('canvas'); ground.width = GW; ground.heigh
   for (let k = 0; k < 8; k++) for (let j = 0; j < 3; j++) { g.fillStyle = (k+j)%2 ? '#fff' : '#111'; g.fillRect(W(j*sq - 1.5*sq), W(-T.tw/2 + k*sq), W(sq), W(sq)); } g.restore();
   for (let i = 0; i < 6; i++) { const p = gridPos(i); g.save(); g.translate(W(p.x), W(p.y)); g.rotate(p.th); g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = 3;
     g.beginPath(); g.moveTo(W(0.075), W(-0.045)); g.lineTo(W(0.075), W(0.045)); g.moveTo(W(0.075), W(-0.045)); g.lineTo(W(0), W(-0.045)); g.moveTo(W(0.075), W(0.045)); g.lineTo(W(0), W(0.045)); g.stroke(); g.restore(); }
+  if (BLACK) {   // everything further than BAND from the track goes black (soft edge): only the track and its trees are projected
+    const mk = document.createElement('canvas'); mk.width = GW; mk.height = GH; const k = mk.getContext('2d');
+    k.fillStyle = '#000'; k.fillRect(0, 0, GW, GH); k.globalCompositeOperation = 'destination-out'; k.filter = `blur(${W(0.05)}px)`;
+    k.lineJoin = k.lineCap = 'round'; k.beginPath(); T.pts.forEach((q, i) => k[i ? 'lineTo' : 'moveTo'](W(q.x), W(q.y))); k.closePath(); k.lineWidth = W(T.tw + 2*BAND - 0.06); k.stroke();
+    g.drawImage(mk, 0, 0); }
 })();
 function gridPos(i) { const q = T.at(S0 - 0.16 - i*0.15), off = (i % 2 ? -1 : 1) * T.tw * 0.22; return { x: q.x - Math.sin(q.a)*off, y: q.y + Math.cos(q.a)*off, th: q.a }; }
 const outerTex = canvasTex(256, 256, g => { g.fillStyle = '#3fae49'; g.fillRect(0, 0, 256, 256); const r = seeded(5);
@@ -313,7 +335,7 @@ for (let k = 0; k < 70 * AREA; k++) { const s = 0.75 + R()*0.9, p = tryPlace(0.0
 for (let k = 0; k < 60 * AREA; k++) { const p = tryPlace(0.02, 0, 20); if (!p) continue; const b = mesh(new THREE.IcosahedronGeometry(0.014 + R()*0.014, 1), LEAF[(R()*3) | 0], p.x, 0.012, p.z); b.scale.y = 0.7; scene.add(b); }
 { const n = Math.round(260 * AREA), im = new THREE.InstancedMesh(new THREE.SphereGeometry(0.005, 6, 5), std(0xffffff, { roughness: 0.5 }), n), d = new THREE.Object3D(), cols = [0xffffff, 0xffe14a, 0xff7ab8, 0xff4a4a, 0xb48cff, 0x7ad7ff]; let i = 0;
   for (let c = 0; c < 26 * AREA; c++) { const cx = R()*AW, cz = R()*AH, col = new THREE.Color(cols[(R()*cols.length) | 0]);
-    for (let k = 0; k < 10 && i < n; k++) { const x = cx + (R() - 0.5)*0.12, z = cz + (R() - 0.5)*0.12; if (trackD(x, z) < T.tw/2 + 0.05) continue; d.position.set(x, 0.006, z); d.updateMatrix(); im.setMatrixAt(i, d.matrix); im.setColorAt(i++, col); } }
+    for (let k = 0; k < 10 && i < n; k++) { const x = cx + (R() - 0.5)*0.12, z = cz + (R() - 0.5)*0.12; if (trackD(x, z) < T.tw/2 + 0.05 || !nearTrack(x, z) || !inView(x, z)) continue; d.position.set(x, 0.006, z); d.updateMatrix(); im.setMatrixAt(i, d.matrix); im.setColorAt(i++, col); } }
   im.count = i; scene.add(im); }
 // woods all round the arena (seen in the tilted view)
 const outerWood = new THREE.Group(); scene.add(outerWood);
@@ -573,14 +595,13 @@ function draw(dt) {
   const p1 = cars.find(c => c.i === 0 && !c.ai); engine.update(p1, !!p1 && phase === 'race' && !paused); SMOKE.update(dt); GLOW.update(dt);
   gT += dt; if (groundDirty && gT > 0.15) { groundTex.needsUpdate = true; groundDirty = false; gT = 0; }
   hudT += dt; if (hudT > 0.15) { hud(); hudT = 0; }
-  const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt; scene.fog = tilt ? fogTilt : null; scene.background = tilt ? skyTilt : bgTop;
+  const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt && !BLACK; scene.fog = tilt && !BLACK ? fogTilt : null; scene.background = tilt && !BLACK ? skyTilt : bgTop;
   renderer.render(scene, tilt ? camTilt : camTop);
 }
 function frame(t) { const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
 
 // ---------------- menu ----------------
 function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase();
-  if ('1234'.includes(k) && k.length === 1) { S.tiltMode = 'abcd'['1234'.indexOf(k)]; S.view = 'tilt'; save(); fitTilt(S.tiltMode); if ($('menu').style.display === 'block') buildMenu(); return; }
   if (k === 'p' || k === 'm') toggleMenu(); else if (k === 'v') { S.view = S.view === 'top' ? 'tilt' : 'top'; save(); location.reload(); }
   else if (k === 'c') { calibOn = !calibOn; calib.visible = calibOn; document.querySelectorAll('.corner').forEach(c => c.style.display = calibOn ? 'block' : 'none'); }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
@@ -598,7 +619,7 @@ function buildMenu() {
   let h = `<div class="row"><b style="flex:1;font-size:16px">Robo GP 3D</b><button id="mClose">✕</button></div>
     <h3>Track size</h3><div class="row">${Object.entries(SIZES).map(([k, v]) => `<button data-size="${k}" class="${S.size === k ? 'on' : ''}">${v.name}<small>${v.w} m</small></button>`).join('')}</div>
     <div class="row"><button data-view="tilt" class="${S.view === 'tilt' ? 'on' : ''}">3D inclinado</button><button data-view="top" class="${S.view === 'top' ? 'on' : ''}">De cima (robôs)</button><button id="mFs">⛶ Ecrã inteiro</button></div>
-    <h3>Enquadramento 3D</h3>${Object.entries(TILT_MODES).map(([k, v]) => `<div class="row"><button data-tilt="${k}" class="${S.tiltMode === k ? 'on' : ''}" style="flex:1;text-align:left">${v.name}</button></div>`).join('')}<small>Teclas 1–4 mudam na hora.</small>
+    <h3>Fundo (vista 3D)</h3><div class="row"><button data-bg="black" class="${S.bg === 'black' ? 'on' : ''}">Só pista (resto preto)</button><button data-bg="forest" class="${S.bg !== 'black' ? 'on' : ''}">Floresta</button></div>
     <h3>Race</h3><div class="row"><button id="mRestart">Restart</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)'], ['loop', 'Loop (long, simple)'], ['grandprix', 'Grand Prix (long, twisty)']]) + sl('laps', 'Laps', 1, 20, 1) +
     `<h3>Cars <span style="color:#9aa0aa">${carCount()} / ${MAX}</span></h3>` + step('players', 'Humans', 'pad / keys / touch') + step('nBuddy', 'BUDDY', 'plays with the kid') + step('nPro', 'PRO', 'races to win');
   for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
@@ -609,7 +630,7 @@ function buildMenu() {
     <div class="row" style="margin-top:12px"><button id="mDef">Reset everything</button></div>`;
   const el = $('menu'); el.innerHTML = h;
   $('mClose').onclick = toggleMenu; $('mFs').onclick = fullscreen;
-  el.querySelectorAll('[data-tilt]').forEach(b => b.onclick = () => { S.tiltMode = b.dataset.tilt; S.view = 'tilt'; save(); fitTilt(S.tiltMode); buildMenu(); });
+  el.querySelectorAll('[data-bg]').forEach(b => b.onclick = () => { S.bg = b.dataset.bg; save(); location.reload(); });
   el.querySelectorAll('[data-size]').forEach(b => b.onclick = () => setSize(b.dataset.size));
   el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; save(); location.reload(); }); $('mRestart').onclick = restart; $('mDef').onclick = () => { S = { ...DEF }; save(); location.reload(); };
   el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { const k = b.dataset.step, d = +b.dataset.d, v = S[k] + d; if (v < 0 || (k === 'players' && v > 2) || (d > 0 && carCount() >= MAX) || (d < 0 && carCount() <= 1)) return; S[k] = v; save(); makeCars(); buildMenu(); });
