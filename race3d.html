@@ -27,7 +27,7 @@
   .stick .knob { position:absolute; left:50%; top:50%; width:56px; height:56px; margin:-28px 0 0 -28px; border-radius:50%; background:currentColor; opacity:.85; }
   #stick0 { left:20px; color:#ffc21a; } #stick1 { right:20px; color:#2fa8ff; }
   .goo { position:absolute; bottom:170px; z-index:7; display:none; font:800 15px system-ui; padding:12px 14px; border-radius:30px; border:0; background:#62d628; color:#103300; }
-  #goo0 { left:44px; } #goo1 { right:44px; }
+  #goo0 { left:44px; } #goo1 { right:44px; } .boost { background:#ffb000; color:#3a2200; bottom:230px; } #boost0 { left:44px; } #boost1 { right:44px; }
 </style>
 </head>
 <body>
@@ -36,7 +36,7 @@
 <div class="corner" data-i="0"></div><div class="corner" data-i="1"></div><div class="corner" data-i="2"></div><div class="corner" data-i="3"></div>
 <div id="hud"></div><div id="banner"></div>
 <div class="stick" id="stick0"><div class="knob"></div></div><div class="stick" id="stick1"><div class="knob"></div></div>
-<button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button>
+<button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button><button class="goo boost" id="boost0">TURBO</button><button class="goo boost" id="boost1">TURBO</button>
 <button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button>
 <div id="menu"></div>
 
@@ -327,6 +327,23 @@ function burst(x, z, col, n = 14) { for (let i = 0; i < n; i++) { const a = Math
 // ---------------- sound ----------------
 let AC = null; const unlock = () => { if (!AC) try { AC = new AudioContext(); } catch (e) {} if (AC && AC.state === 'suspended') AC.resume(); };
 addEventListener('keydown', unlock); addEventListener('pointerdown', unlock);
+// engine sound for the yellow car (P1): pitch follows speed, a hiss + whistle while the turbo is on
+const engine = { on: false,
+  start() { if (this.on || !AC) return; this.on = true; const o1 = AC.createOscillator(), o2 = AC.createOscillator(), f = AC.createBiquadFilter(), g = AC.createGain();
+    o1.type = 'sawtooth'; o2.type = 'square'; o2.detune.value = 9; f.type = 'lowpass'; f.frequency.value = 500; g.gain.value = 0;
+    o1.connect(f); o2.connect(f); f.connect(g).connect(AC.destination); o1.start(); o2.start();
+    const n = AC.createBuffer(1, AC.sampleRate, AC.sampleRate), d = n.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random()*2 - 1;
+    const ns = AC.createBufferSource(), nf = AC.createBiquadFilter(), ng = AC.createGain(); ns.buffer = n; ns.loop = true; nf.type = 'bandpass'; nf.frequency.value = 2400; nf.Q.value = 1.2; ng.gain.value = 0;
+    ns.connect(nf).connect(ng).connect(AC.destination); ns.start();
+    const wh = AC.createOscillator(), wg = AC.createGain(); wh.type = 'sine'; wh.frequency.value = 1800; wg.gain.value = 0; wh.connect(wg).connect(AC.destination); wh.start();
+    Object.assign(this, { o1, o2, f, g, ng, wh, wg }); },
+  update(car, running) { if (!AC) return; if (!this.on) this.start(); const t = AC.currentTime, k = car ? clamp(Math.hypot(car.vx, car.vy) / VMAX, 0, 1.8) : 0, tb = car && car.turbo;
+    this.o1.frequency.setTargetAtTime(48 + 95*k + (tb ? 40 : 0), t, 0.08); this.o2.frequency.setTargetAtTime(96 + 190*k + (tb ? 80 : 0), t, 0.08);
+    this.f.frequency.setTargetAtTime(380 + 900*k + (tb ? 900 : 0), t, 0.1); this.g.gain.setTargetAtTime(running ? 0.035 + 0.05*Math.min(1, k) : 0, t, 0.1);
+    this.ng.gain.setTargetAtTime(running && tb ? 0.05 : 0, t, 0.06); this.wh.frequency.setTargetAtTime(1700 + 500*k, t, 0.1); this.wg.gain.setTargetAtTime(running && tb ? 0.018 : 0, t, 0.08); },
+  spool() { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime; o.type = 'sawtooth'; o.frequency.setValueAtTime(300, t); o.frequency.exponentialRampToValueAtTime(2200, t + 0.45);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.1); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5); o.connect(g).connect(AC.destination); o.start(); o.stop(t + 0.55); },
+};
 function beep(f, dur = 0.15, vol = 0.2, type = 'square', f2) { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.value = f; if (f2) o.frequency.exponentialRampToValueAtTime(f2, AC.currentTime + dur);
   g.gain.value = vol; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur); o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + dur); }
 
@@ -363,17 +380,21 @@ class Car {
   p(k) { return S['p' + (this.i + 1) + k]; }
   get name() { return this.ai ? this.ai.label : 'P' + (this.i + 1); }
   reset() { const g = gridPos(this.i); Object.assign(this, { x: g.x, y: g.y, th: g.th, vx: 0, vy: 0, w: 0, cmd: { v: 0, w: 0 }, boostUntil: 0, padUntil: 0, gooUntil: 0, slowUntil: 0, gooCd: 0,
-    hint: null, lastS: null, dist: 0, laps: 0, lapStart: 0, last: null, best: null, done: false, roll: 0 });
+    hint: null, lastS: null, dist: 0, laps: 0, lapStart: 0, last: null, best: null, done: false, roll: 0, energy: 1, turbo: false });
     const L = T.locate(this, null); this.hint = L.i; this.lastS = L.s; this.dist = wrapD(L.s - S0, T.per); }
-  get speedLimit() { const cap = this.ai ? this.ai.cap() : this.p('Cap'); let m = 1; if (now < this.boostUntil) m = 1.5; if (now < this.padUntil) m = Math.max(m, 1.7);
+  get speedLimit() { const cap = this.ai ? this.ai.cap() : this.p('Cap'); let m = 1; if (now < this.boostUntil) m = 1.5; if (this.turbo) m = Math.max(m, 1.65); if (now < this.padUntil) m = Math.max(m, 1.7);
     if (now < this.gooUntil) m *= !this.ai && this.p('Mode') === 'kid' ? 0.7 : 0.45; return VMAX * cap / 100 * m; }
   shoot() { if (phase !== 'race' || now < this.gooCd) return; this.gooCd = now + 1.2; const c = Math.cos(this.th), s = Math.sin(this.th), sp = Math.max(0, this.vx*c + this.vy*s) + 0.9;
     goos.push(new Goo(this, this.x + c*0.08, this.y + s*0.08, c*sp, s*sp)); beep(520, 0.12, 0.12, 'sine', 180); }
   slime(d) { if (now >= this.gooUntil) beep(160, 0.25, 0.15, 'sawtooth', 70); this.gooUntil = Math.max(this.gooUntil, now + d); }
   command(inp) {
-    if (phase !== 'race' || this.done) { this.cmd = { v: 0, w: 0 }; return; }
+    if (phase !== 'race' || this.done) { this.cmd = { v: 0, w: 0 }; this.turbo = false; return; }
     if (this.ai) { this.cmd = this.ai.drive(this); return; }
     if (inp.fire) this.shoot();
+    // turbo button: hold for extra speed while the tank lasts (~3 s), refills when released
+    const want = inp.boost && this.energy > 0.02 && (this.turbo || this.energy > 0.15);
+    if (want && !this.turbo && this.i === 0) engine.spool();
+    this.turbo = want; this.energy = clamp(this.energy + (this.turbo ? -0.33 : 0.16) * DT, 0, 1);
     const vmax = this.speedLimit; let v, w;
     if (this.p('Mode') === 'kid') {   // go where the stick points (as the child sees it); gentle pull back onto the track
       const rot = { bottom: 0, left: -Math.PI/2, top: Math.PI, right: Math.PI/2 }[this.p('Seat')], c = Math.cos(rot), s = Math.sin(rot);
@@ -398,10 +419,10 @@ class Car {
   sync(dt) {
     const sp = Math.hypot(this.vx, this.vy), g = this.m.g; g.position.set(this.x, 0, this.y); g.rotation.y = -this.th;
     this.roll += (clamp(this.w * sp * 0.25, -0.18, 0.18) - this.roll) * Math.min(1, dt * 10); this.m.body.rotation.x = this.roll;
-    const boosting = now < this.padUntil || now < this.boostUntil;
+    const boosting = now < this.padUntil || now < this.boostUntil || this.turbo;
     this.m.glow.material.opacity = boosting ? 0.95 : 0.5; this.m.glow.scale.setScalar(boosting ? 1.35 : 1); this.m.goo.visible = now < this.gooUntil;
     const bx = this.x - Math.cos(this.th)*0.065, bz = this.y - Math.sin(this.th)*0.065;
-    if (boosting && Math.random() < 0.9) GLOW.spawn({ x: bx, y: 0.025, z: bz, vx: -this.vx*0.3 + rnd(-0.05, 0.05), vz: -this.vy*0.3 + rnd(-0.05, 0.05), life: 0.3, s0: 0.035, s1: 0.008, c0: now < this.padUntil ? '#7fe9ff' : '#fff3a0', c1: now < this.padUntil ? '#1a5cff' : '#ff6a00' });
+    if (boosting && Math.random() < 0.9) GLOW.spawn({ x: bx, y: 0.025, z: bz, vx: -this.vx*0.3 + rnd(-0.05, 0.05), vz: -this.vy*0.3 + rnd(-0.05, 0.05), life: 0.3, s0: 0.035, s1: 0.008, c0: now < this.padUntil ? '#7fe9ff' : this.turbo ? '#ffffff' : '#fff3a0', c1: now < this.padUntil ? '#1a5cff' : this.turbo ? '#ff3d00' : '#ff6a00' });
     const slide = Math.abs(this.w) * sp;
     if (phase === 'race' && (slide > 0.9 || (this.off && sp > 0.1))) { if (Math.random() < 0.5) SMOKE.spawn({ x: bx, y: 0.012, z: bz, vx: rnd(-0.04, 0.04), vz: rnd(-0.04, 0.04), vy: 0.05, life: 0.7, s0: 0.02, s1: 0.07, c0: this.off ? '#d9c58e' : '#e8e8e8', a: 0.5 });
       if (!this.off) skid(this.x, this.y, this.th, 0.08); }
@@ -482,20 +503,21 @@ function updateItems(dt) {
 
 // ---------------- input ----------------
 const keys = new Set(); addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); hotkey(e); }); addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-const KB = [{ u: 'w', d: 's', l: 'a', r: 'd', f: 'g' }, { u: 'arrowup', d: 'arrowdown', l: 'arrowleft', r: 'arrowright', f: 'enter' }];
-const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v)*0.12) / 0.88, touch = [null, null], touchFire = [false, false];
-function readInput(i) { const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[i]; let lx = 0, ly = 0, rx = 0, fire = touchFire[i];
-  if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); fire ||= [0, 5, 7].some(b => gp.buttons[b] && gp.buttons[b].pressed); }
+const KB = [{ u: 'w', d: 's', l: 'a', r: 'd', f: 'g', b: 'shift' }, { u: 'arrowup', d: 'arrowdown', l: 'arrowleft', r: 'arrowright', f: 'enter', b: '0' }];
+const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v)*0.12) / 0.88, touch = [null, null], touchFire = [false, false], touchBoost = [false, false];
+function readInput(i) { const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[i]; let lx = 0, ly = 0, rx = 0, fire = touchFire[i], boost = touchBoost[i];
+  if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); fire ||= [0, 5, 7].some(b => gp.buttons[b] && gp.buttons[b].pressed); boost ||= [1, 4, 6].some(b => gp.buttons[b] && gp.buttons[b].pressed); }
   const ts = touch[i]; if (ts) { if (S['p' + (i+1) + 'Mode'] === 'kid') { lx += ts.x; ly += ts.y; } else { ly += ts.y; rx += ts.x; } }
-  const k = KB[i]; if (k) { if (keys.has(k.l)) lx -= 1; if (keys.has(k.r)) lx += 1; if (keys.has(k.u)) ly -= 1; if (keys.has(k.d)) ly += 1; if (keys.has(k.f)) fire = true; }
-  const m = Math.hypot(lx, ly); if (m > 1) { lx /= m; ly /= m; } return { lx, ly, rx: clamp(rx, -1, 1), fire }; }
+  const k = KB[i]; if (k) { if (keys.has(k.l)) lx -= 1; if (keys.has(k.r)) lx += 1; if (keys.has(k.u)) ly -= 1; if (keys.has(k.d)) ly += 1; if (keys.has(k.f)) fire = true; if (keys.has(k.b)) boost = true; }
+  const m = Math.hypot(lx, ly); if (m > 1) { lx /= m; ly /= m; } return { lx, ly, rx: clamp(rx, -1, 1), fire, boost }; }
 const isTouch = matchMedia('(pointer:coarse)').matches || /[?&]touch/.test(location.search);
 [0, 1].forEach(i => { const el = $('stick' + i), knob = el.querySelector('.knob'); let id = null;
   const mv = e => { const b = el.getBoundingClientRect(), Rr = b.width/2; let x = (e.clientX - b.left - Rr)/Rr, y = (e.clientY - b.top - Rr)/Rr; const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; } touch[i] = { x: dz(x), y: dz(y) }; knob.style.transform = `translate(${x*Rr*0.7}px,${y*Rr*0.7}px)`; };
   el.addEventListener('pointerdown', e => { id = e.pointerId; el.setPointerCapture(id); mv(e); }); el.addEventListener('pointermove', e => { if (e.pointerId === id) mv(e); });
   const end = e => { if (e.pointerId === id) { id = null; touch[i] = null; knob.style.transform = ''; } }; el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
-  const b = $('goo' + i); b.addEventListener('pointerdown', e => { touchFire[i] = true; e.preventDefault(); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => touchFire[i] = false); });
-if (isTouch) for (const id of ['stick0', 'stick1', 'goo0', 'goo1']) $(id).style.display = 'block';
+  const b = $('goo' + i); b.addEventListener('pointerdown', e => { touchFire[i] = true; e.preventDefault(); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => touchFire[i] = false);
+  const bb = $('boost' + i); bb.addEventListener('pointerdown', e => { touchBoost[i] = true; e.preventDefault(); }); for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) bb.addEventListener(ev, () => touchBoost[i] = false); });
+if (isTouch) for (const id of ['stick0', 'stick1', 'goo0', 'goo1', 'boost0', 'boost1']) $(id).style.display = 'block';
 
 // ---------------- calibration grid ----------------
 const calib = new THREE.Group(); calib.visible = false; scene.add(calib);
@@ -526,9 +548,11 @@ function tick(dt) {
 }
 let acc = 0, last = performance.now(), hudT = 0, gT = 0;
 function hud() { const rank = [...cars].sort((a, b) => b.dist - a.dist);
-  $('hud').innerHTML = rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
+  const p1 = cars.find(c => c.i === 0 && !c.ai), bar = p1 ? `<div style="margin:2px 0 6px">TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>` : '';
+  $('hud').innerHTML = bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
 function draw(dt) {
-  for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt); SMOKE.update(dt); GLOW.update(dt);
+  for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt);
+  const p1 = cars.find(c => c.i === 0 && !c.ai); engine.update(p1, !!p1 && phase === 'race' && !paused); SMOKE.update(dt); GLOW.update(dt);
   gT += dt; if (groundDirty && gT > 0.15) { groundTex.needsUpdate = true; groundDirty = false; gT = 0; }
   hudT += dt; if (hudT > 0.15) { hud(); hudT = 0; }
   const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt; scene.fog = tilt ? fogTilt : null; scene.background = tilt ? skyTilt : bgTop;
@@ -563,7 +587,7 @@ function buildMenu() {
   h += `<h3>AI</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) +
     `<h3>Projection</h3>` + sl('arenaW', 'Projected width (m)', 0.8, 5, 0.01) + sl('camH', '3D depth (eye height, m)', 0.9, 5, 0.1) + sel('view', 'View', [['top', 'top-down (projector)'], ['tilt', 'tilted (screen)']]) + sel('balloon', 'Balloon', [['on', 'on'], ['off', 'off']]) +
     `<small>Lower eye height = stronger 3D lean. The ground always stays true to scale.</small>
-    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>Space</kbd> pause<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo · P2 arrows + <kbd>Enter</kbd> · pad: stick + A/R1/R2</small>
+    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>Space</kbd> pause<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo + <kbd>Shift</kbd> turbo · P2 arrows + <kbd>Enter</kbd> · pad: stick · A/R1/R2 goo · B/L1/L2 turbo</small>
     <div class="row" style="margin-top:12px"><button id="mDef">Reset everything</button></div>`;
   const el = $('menu'); el.innerHTML = h;
   $('mClose').onclick = toggleMenu; $('mFs').onclick = fullscreen;
