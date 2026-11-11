@@ -18,6 +18,8 @@
   #menu select, #menu button, #menuBtn { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 9px; font:inherit; }
   #menu button.on { background:#1a73c9; border-color:#1a73c9; } #menu input[type=range] { width:110px; accent-color:#4aa3ff; } #menu .v { width:40px; text-align:right; }
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
+  #fsBtn { position:absolute; top:10px; right:96px; z-index:8; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  :fullscreen #fsBtn { display:none; }
   #menuBtn { position:absolute; top:10px; right:10px; z-index:8; font-weight:600; padding:7px 12px; background:rgba(32,34,40,.82); border:0; cursor:pointer; }
   kbd { background:#555a66; border-radius:3px; padding:0 4px; }
   .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #ffb000; border-radius:50%; z-index:7; cursor:grab; display:none; }
@@ -35,7 +37,7 @@
 <div id="hud"></div><div id="banner"></div>
 <div class="stick" id="stick0"><div class="knob"></div></div><div class="stick" id="stick1"><div class="knob"></div></div>
 <button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button>
-<button id="menuBtn">☰ Menu</button>
+<button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button>
 <div id="menu"></div>
 
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
@@ -43,7 +45,8 @@
 import * as THREE from 'three';
 
 // ---------------- settings ----------------
-const DEF = { arenaW: 1.9, track: 'bean', players: 1, nBuddy: 0, nPro: 2, laps: 5, camH: 2.0, view: 'top', balloon: 'on',
+const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' } };
+const DEF = { size: 'medium', arenaW: 1.9, track: 'bean', players: 1, nBuddy: 0, nPro: 2, laps: 5, camH: 2.0, view: 'top', balloon: 'on',
   p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
@@ -60,15 +63,25 @@ const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(CW, CH);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const AW = S.arenaW, AH = AW * CH / CW, TWID = 0.26;
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1a0e);
+function setSize(k) { S.size = k; S.arenaW = SIZES[k].w; S.track = SIZES[k].track; save(); location.reload(); }
+const scene = new THREE.Scene(), bgTop = new THREE.Color(0x000000), skyTilt = new THREE.Color(0x9fd8ff), fogTilt = new THREE.Fog(0x9fd8ff, 3, 9); scene.background = bgTop;
 addEventListener('resize', () => { S.corners = null; save(); location.reload(); });
 
 // Projector camera: perspective, looking STRAIGHT down. The ground plane maps 1:1 (real cars stay aligned with the
 // projected track); only things with height lean outwards — that is the "GTA 2 / hologram" depth.
 const camTop = new THREE.PerspectiveCamera(2 * Math.atan(AH / 2 / S.camH) * 180 / Math.PI, CW / CH, 0.05, S.camH + 2);
 camTop.up.set(0, 0, -1); camTop.position.set(AW/2, S.camH, AH/2); camTop.lookAt(AW/2, 0, AH/2);
-const camTilt = new THREE.PerspectiveCamera(34, CW / CH, 0.05, 30);
-camTilt.position.set(AW/2, AW*0.95, AH/2 + AW*0.85); camTilt.lookAt(AW/2, 0, AH/2 + 0.05);
+// tilted 3D view: as close as possible while the whole arena still fits; the world around it fills the rest
+const camTilt = new THREE.PerspectiveCamera(38, CW / CH, 0.05, 60);
+(function fitTilt() {
+  const pitch = 54 * Math.PI / 180, corners = [[0, 0], [AW, 0], [0, AH], [AW, AH]].map(([x, z]) => new THREE.Vector3(x, 0, z));
+  const place = (d, tz) => { camTilt.position.set(AW/2, Math.sin(pitch) * d, tz + Math.cos(pitch) * d); camTilt.lookAt(AW/2, 0, tz); camTilt.updateMatrixWorld(); };
+  const fits = (d, tz) => { place(d, tz); return corners.every(c => { const p = c.clone().project(camTilt); return Math.abs(p.x) <= 1.0 && Math.abs(p.y) <= 1.0; }); };
+  let best = null;
+  for (let tz = AH * 0.3; tz <= AH * 0.7; tz += AH * 0.02) { let lo = 0.2, hi = 30; if (!fits(hi, tz)) continue;
+    for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (fits(m, tz)) hi = m; else lo = m; } if (!best || hi < best[0]) best = [hi, tz]; }
+  place(best[0], best[1]);
+})();
 
 function homography(w, h, q) {
   const src = [[0,0],[w,0],[w,h],[0,h]], A = [], B = [];
@@ -166,7 +179,13 @@ const ground = document.createElement('canvas'); ground.width = GW; ground.heigh
     g.beginPath(); g.moveTo(W(0.075), W(-0.045)); g.lineTo(W(0.075), W(0.045)); g.moveTo(W(0.075), W(-0.045)); g.lineTo(W(0), W(-0.045)); g.moveTo(W(0.075), W(0.045)); g.lineTo(W(0), W(0.045)); g.stroke(); g.restore(); }
 })();
 function gridPos(i) { const q = T.at(S0 - 0.16 - i*0.15), off = (i % 2 ? -1 : 1) * T.tw * 0.22; return { x: q.x - Math.sin(q.a)*off, y: q.y + Math.cos(q.a)*off, th: q.a }; }
+const outerTex = canvasTex(256, 256, g => { g.fillStyle = '#3fae49'; g.fillRect(0, 0, 256, 256); const r = seeded(5);
+  for (let i = 0; i < 2500; i++) { g.fillStyle = r() < 0.5 ? 'rgba(20,110,40,.5)' : 'rgba(170,235,120,.45)'; g.fillRect(r()*256, r()*256, 2, 3); } });
+outerTex.wrapS = outerTex.wrapT = THREE.RepeatWrapping; outerTex.repeat.set(40, 40);
+const outer = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ map: outerTex, roughness: 1 }));
+outer.rotation.x = -Math.PI/2; outer.position.set(AW/2, -0.002, AH/2); outer.receiveShadow = true;
 const groundTex = new THREE.CanvasTexture(ground); groundTex.colorSpace = THREE.SRGBColorSpace; groundTex.anisotropy = 8;
+scene.add(outer);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(AW, AH), new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.95 }));
 floor.rotation.x = -Math.PI/2; floor.position.set(AW/2, 0, AH/2); floor.receiveShadow = true; scene.add(floor);
 let groundDirty = false;
@@ -247,6 +266,17 @@ for (let k = 0; k < 60; k++) { const p = tryPlace(0.02, 0, 20); if (!p) continue
   for (let c = 0; c < 26; c++) { const cx = R()*AW, cz = R()*AH, col = new THREE.Color(cols[(R()*cols.length) | 0]);
     for (let k = 0; k < 10 && i < n; k++) { const x = cx + (R() - 0.5)*0.12, z = cz + (R() - 0.5)*0.12; if (trackD(x, z) < T.tw/2 + 0.05) continue; d.position.set(x, 0.006, z); d.updateMatrix(); im.setMatrixAt(i, d.matrix); im.setColorAt(i++, col); } }
   im.count = i; scene.add(im); }
+// woods all round the arena (seen in the tilted view)
+const outerWood = new THREE.Group(); scene.add(outerWood);
+{ const Ro = seeded(99), save = scene.add.bind(scene);
+  for (let k = 0; k < 160; k++) { const x = -1.6 + Ro() * (AW + 3.2), z = -2.6 + Ro() * (AH + 3.0);
+    if (x > -0.03 && x < AW + 0.03 && z > -0.03 && z < AH + 0.03) continue;
+    if (z > AH - 0.1) continue;   // nothing between the camera and the track
+    const s = 0.9 + Ro() * 1.4, g = new THREE.Group(), pine = Ro() < 0.35;
+    g.add(mesh(new THREE.CylinderGeometry(0.008*s, 0.013*s, 0.07*s, 6), TRUNK, 0, 0.035*s, 0, false));
+    if (pine) for (let j = 0; j < 3; j++) g.add(mesh(new THREE.ConeGeometry((0.05 - 0.012*j)*s, 0.07*s, 7), PINE[j % 2], 0, (0.075 + 0.04*j)*s, 0, false));
+    else for (const [bx, by, bz, br] of [[0, 0.1, 0, 0.05], [0.032, 0.085, 0.012, 0.036], [-0.028, 0.09, -0.018, 0.038], [0.004, 0.135, 0.008, 0.032]]) g.add(mesh(new THREE.IcosahedronGeometry(br*s, 1), LEAF[(Ro() * (Ro() < 0.8 ? 3 : 6)) | 0], bx*s, by*s, bz*s, false));
+    g.position.set(x, 0, z); g.rotation.y = Ro() * 6; outerWood.add(g); } }
 // hot-air balloon drifting high above (big parallax + a shadow on the ground)
 if (S.balloon === 'on') { const g = new THREE.Group(), tex = canvasTex(128, 64, c => { ['#ff3b5c', '#ffc21a', '#2fa8ff', '#fff', '#3ddc6a', '#ff7a1a', '#b26bff', '#fff'].forEach((col, i) => { c.fillStyle = col; c.fillRect(i*16, 0, 16, 64); }); });
   const env = mesh(new THREE.SphereGeometry(0.055, 20, 14), std(0xffffff, { map: tex, roughness: 0.6 }), 0, 0.07, 0); env.scale.y = 1.15; g.add(env);
@@ -470,7 +500,8 @@ function draw(dt) {
   for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt); SMOKE.update(dt); GLOW.update(dt);
   gT += dt; if (groundDirty && gT > 0.15) { groundTex.needsUpdate = true; groundDirty = false; gT = 0; }
   hudT += dt; if (hudT > 0.15) { hud(); hudT = 0; }
-  renderer.render(scene, S.view === 'tilt' ? camTilt : camTop);
+  const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt; scene.fog = tilt ? fogTilt : null; scene.background = tilt ? skyTilt : bgTop;
+  renderer.render(scene, tilt ? camTilt : camTop);
 }
 function frame(t) { const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
 
@@ -483,11 +514,16 @@ function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return;
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); }
 function toggleMenu() { const m = $('menu'), open = m.style.display !== 'block'; m.style.display = open ? 'block' : 'none'; $('menuBtn').style.display = open ? 'none' : 'block'; if (open) buildMenu(); }
 $('menuBtn').onclick = toggleMenu;
+const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
+$('fsBtn').onclick = fullscreen;
+addEventListener('fullscreenchange', () => setTimeout(() => location.reload(), 300));   // re-fit the 3D to the new window size
 function buildMenu() {
   const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}">${S[k]}</span></div>`;
   const sel = (k, label, opts) => `<div class="row"><label>${label}</label><select data-k="${k}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
   const step = (k, label, hint) => `<div class="row step"><label>${label}<small>${hint}</small></label><button data-step="${k}" data-d="-1">−</button><span class="n">${S[k]}</span><button data-step="${k}" data-d="1">+</button></div>`;
   let h = `<div class="row"><b style="flex:1;font-size:16px">Robo GP 3D</b><button id="mClose">✕</button></div>
+    <h3>Track size</h3><div class="row">${Object.entries(SIZES).map(([k, v]) => `<button data-size="${k}" class="${S.size === k ? 'on' : ''}">${v.name}<small>${v.w} m</small></button>`).join('')}</div>
+    <div class="row"><button data-view="tilt" class="${S.view === 'tilt' ? 'on' : ''}">3D inclinado</button><button data-view="top" class="${S.view === 'top' ? 'on' : ''}">De cima (robôs)</button><button id="mFs">⛶ Ecrã inteiro</button></div>
     <h3>Race</h3><div class="row"><button id="mRestart">Restart</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)']]) + sl('laps', 'Laps', 1, 20, 1) +
     `<h3>Cars <span style="color:#9aa0aa">${carCount()} / ${MAX}</span></h3>` + step('players', 'Humans', 'pad / keys / touch') + step('nBuddy', 'BUDDY', 'plays with the kid') + step('nPro', 'PRO', 'races to win');
   for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
@@ -497,7 +533,9 @@ function buildMenu() {
     <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>Space</kbd> pause<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo · P2 arrows + <kbd>Enter</kbd> · pad: stick + A/R1/R2</small>
     <div class="row" style="margin-top:12px"><button id="mDef">Reset everything</button></div>`;
   const el = $('menu'); el.innerHTML = h;
-  $('mClose').onclick = toggleMenu; $('mRestart').onclick = restart; $('mDef').onclick = () => { S = { ...DEF }; save(); location.reload(); };
+  $('mClose').onclick = toggleMenu; $('mFs').onclick = fullscreen;
+  el.querySelectorAll('[data-size]').forEach(b => b.onclick = () => setSize(b.dataset.size));
+  el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; save(); buildMenu(); }); $('mRestart').onclick = restart; $('mDef').onclick = () => { S = { ...DEF }; save(); location.reload(); };
   el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { const k = b.dataset.step, d = +b.dataset.d, v = S[k] + d; if (v < 0 || (k === 'players' && v > 2) || (d > 0 && carCount() >= MAX) || (d < 0 && carCount() <= 1)) return; S[k] = v; save(); makeCars(); buildMenu(); });
   el.querySelectorAll('[data-k]').forEach(inp => { const k = inp.dataset.k; inp.value = String(S[k]);
     inp.addEventListener(inp.type === 'range' ? 'change' : 'input', () => { S[k] = inp.type === 'range' ? +inp.value : inp.value; save(); if (['track', 'arenaW', 'camH', 'balloon'].includes(k)) location.reload(); if (k.endsWith('Mode')) buildMenu(); });
