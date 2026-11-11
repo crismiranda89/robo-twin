@@ -20,6 +20,7 @@
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
   #fsBtn { position:absolute; top:10px; right:96px; z-index:8; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   :fullscreen #fsBtn { display:none; }
+  #toast { position:absolute; left:50%; bottom:14%; transform:translateX(-50%); z-index:15; padding:12px 26px; border-radius:30px; background:rgba(20,22,28,.85); color:#fff; font:800 28px system-ui; opacity:0; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
   #lobby { position:absolute; inset:0; z-index:20; display:none; background:rgba(5,8,14,.62); overflow:auto; font:16px/1.35 system-ui,sans-serif; }
   #lobby .wrap { max-width:1100px; margin:3vh auto; padding:0 16px; }
   #lobby h1 { margin:0 0 4px; text-align:center; font:900 64px system-ui; letter-spacing:.04em; color:#fff; text-shadow:0 4px 24px rgba(255,170,0,.6); }
@@ -33,6 +34,9 @@
   #lobby .skin.taken { opacity:.35; }
   #lobby .modes { display:flex; gap:8px; margin-top:10px; } #lobby .modes button, #lobby .row2 button { flex:1; background:#262a35; color:#e9edf5; border:2px solid #3b4152; border-radius:12px; padding:9px 6px; font:600 14px system-ui; cursor:pointer; }
   #lobby .modes button.on, #lobby .row2 button.on { background:#1a73c9; border-color:#1a73c9; }
+  #lobby .help { display:flex; gap:5px; align-items:center; margin-top:10px; color:#dfe5ef; } #lobby .help b { margin-right:4px; }
+  #lobby .help button { flex:1; background:#262a35; color:#ffd21a; border:2px solid #3b4152; border-radius:10px; padding:5px 2px; font:700 13px system-ui; cursor:pointer; } #lobby .help button small { display:block; color:#cfd6e4; font:500 10px system-ui; }
+  #lobby .help button.on { background:#5a4300; border-color:#ffd21a; }
   #lobby .keys { margin-top:8px; color:#aeb7c7; font-size:13px; } #lobby kbd { background:#3b4152; border-radius:4px; padding:0 5px; color:#fff; }
   #lobby .row2 { display:flex; gap:8px; align-items:center; justify-content:center; margin:14px auto 0; max-width:700px; color:#dfe5ef; } #lobby .row2 b { min-width:120px; }
   #lobby .go { display:block; margin:18px auto 6px; padding:16px 60px; font:900 30px system-ui; color:#2a1a00; background:linear-gradient(#ffe066, #ffb000); border:0; border-radius:40px; cursor:pointer; box-shadow:0 6px 24px rgba(255,176,0,.5); }
@@ -51,7 +55,7 @@
 <a id="toInicio" href="https://192.168.68.200:8444/inicio" title="Voltar à página de início da casa" style="position:fixed;left:10px;bottom:10px;z-index:60;padding:6px 12px;border-radius:999px;background:rgba(30,33,39,.75);color:#fff;font:600 13px/1 system-ui,sans-serif;text-decoration:none">← Início</a> <a href="index.html" style="position:fixed;left:96px;bottom:10px;z-index:60;padding:6px 12px;border-radius:999px;background:rgba(30,33,39,.75);color:#fff;font:600 13px/1 system-ui,sans-serif;text-decoration:none">Pista 2D</a>
 <canvas id="gl"></canvas>
 <div class="corner" data-i="0"></div><div class="corner" data-i="1"></div><div class="corner" data-i="2"></div><div class="corner" data-i="3"></div>
-<div id="hud"></div><div id="banner"></div>
+<div id="hud"></div><div id="banner"></div><div id="toast"></div>
 <div class="stick" id="stick0"><div class="knob"></div></div><div class="stick" id="stick1"><div class="knob"></div></div>
 <button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button><button class="goo boost" id="boost0">TURBO</button><button class="goo boost" id="boost1">TURBO</button>
 <button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button>
@@ -66,11 +70,12 @@ import * as THREE from 'three';
 const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' },
   long: { w: 5.5, track: 'loop', name: 'Longa', laps: 3 }, xl: { w: 7.0, track: 'loop', name: 'Muito longa', laps: 2 } };   // 3D view: the camera zooms in to fill the screen, so the world is wider
 const DEF = { bg: 'black', tiltMode: 'd', size: 'long', arenaW: 5.5, track: 'loop', players: 2, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
-  p1Skin: 'red', p2Skin: 'yellow', p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
+  p1Help: 3, p2Help: 0, p1Skin: 'red', p2Skin: 'yellow', p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
 if ((S.v || 0) < 3) Object.assign(S, { size: 'long', track: 'loop', laps: 3, view: 'tilt' });   // one-off: switch to the long track
 if ((S.v || 0) < 5) { S.tiltMode = 'd'; S.bg = 'black'; if (SIZES[S.size]) S.arenaW = SIZES[S.size].w; if (S.size === 'long' || S.size === 'xl') S.track = 'loop'; S.v = 5; }
+if (S.p1Help == null) { S.p1Help = 3; S.p2Help = 0; }
 if ((S.v || 0) < 6) { Object.assign(S, { players: 2, p1Mode: 'kid', p2Mode: 'adult', p1Skin: S.p1Skin || 'red', p2Skin: S.p2Skin || 'yellow', nPro: Math.min(S.nPro ?? 2, 2), v: 6 }); }
 const save = () => { try { localStorage.setItem('robogp3d', JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
@@ -471,6 +476,14 @@ function makeCar(skin) {
   for (const [x, y, z, r] of [[0.02, 0.04, -0.014, 0.014], [-0.022, 0.042, 0.012, 0.013], [0.04, 0.034, 0.016, 0.009], [-0.04, 0.036, -0.018, 0.01], [0, 0.048, 0, 0.011]]) goo.add(mesh(new THREE.SphereGeometry(r, 10, 8), gm, x, y, z, false));
   goo.visible = false; g.add(goo); scene.add(g); return { g, body, glow, goo, siren };
 }
+// Drive assist, from 0 (none) to 4 (the car steers itself and the stick is only the accelerator)
+const HELP = ['Sem ajuda', 'Leve', 'Curvas', 'Quase sozinho', 'Volante automático'];
+function autoPilot(car) {   // where the track goes: steering towards a point ahead, and a safe speed for the bends to come
+  const L = T.locate(car, car.hint), vmax = car.speedLimit, sp = Math.hypot(car.vx, car.vy); let vt = vmax;
+  for (let d = 0; d <= 1.2; d += 0.04) { const c = Math.abs(T.curv(L.s + d)) + 1e-3, vc = Math.min(Math.sqrt(1.1 / c), WMAX * 0.65 / c); vt = Math.min(vt, Math.sqrt(vc*vc + 2*ACC*0.8*d)); }
+  const Ld = 0.1 + 0.35 * sp, q = T.at(L.s + Ld), al = angDiff(Math.atan2(q.y - car.y, q.x - car.x), car.th);
+  return { vt: Math.abs(al) > 1.2 ? 0 : vt * Math.cos(al) ** 2, w: clamp(Math.max(3, 2*sp/Ld) * al, -WMAX, WMAX) };
+}
 let now = 0, phase = 'count', tCount = 0, excite = 0, winner = null, cars = [];
 const kidCar = () => cars.find(c => !c.ai && c.p('Mode') === 'kid') || cars.find(c => !c.ai);
 class Car {
@@ -496,11 +509,16 @@ class Car {
     const vmax = this.speedLimit; let v, w;
     if (this.p('Mode') === 'kid') {   // go where the stick points (as the child sees it); gentle pull back onto the track
       const rot = { bottom: 0, left: -Math.PI/2, top: Math.PI, right: Math.PI/2 }[this.p('Seat')], c = Math.cos(rot), s = Math.sin(rot);
-      let dx = (inp.lx*c - inp.ly*s) * vmax, dy = (inp.lx*s + inp.ly*c) * vmax; const a = this.p('Assist') / 100, L = T.locate(this, this.hint);
+      let dx = (inp.lx*c - inp.ly*s) * vmax, dy = (inp.lx*s + inp.ly*c) * vmax; const H = this.p('Help') ?? 0, a = [0, 0.5, 1, 1, 1][H], L = T.locate(this, this.hint);
       if (a > 0 && Math.hypot(dx, dy) > 0.02 && L.d > T.tw*0.3) { const k = clamp((L.d - T.tw*0.3) / (T.tw*0.4), 0, 1) * a * vmax; dx += (L.px - this.x)/L.d * k; dy += (L.py - this.y)/L.d * k; }
       const sp = Math.min(vmax, Math.hypot(dx, dy));
       if (sp > 0.03) { const err = angDiff(Math.atan2(dy, dx), this.th); w = clamp(err * 7, -WMAX, WMAX); v = sp * Math.max(0, Math.cos(err)) ** 3; } else { v = 0; w = 0; }
     } else { v = -inp.ly * vmax; w = (inp.rx || inp.lx) * WMAX; }
+    const H = this.p('Help') ?? 0;
+    if (H >= 2) { const ap = autoPilot(this), gas = this.p('Mode') === 'kid' ? Math.min(1, Math.hypot(inp.lx, inp.ly)) : Math.max(0, -inp.ly);
+      if (H === 2) v = Math.min(v, ap.vt + 0.02);                                     // brakes before the bends for him
+      else if (H === 3) { v = gas * Math.min(vmax, ap.vt * 1.1); w = 0.75 * ap.w + 0.25 * w; }   // steers mostly by itself
+      else { v = gas * Math.min(vmax, ap.vt); w = ap.w; } }                           // full auto steering: stick = accelerator
     this.cmd = { v, w };
   }
   step(dt) {
@@ -650,7 +668,7 @@ function tick(dt) {
 }
 let acc = 0, last = performance.now(), hudT = 0, gT = 0;
 function hud() { const rank = [...cars].sort((a, b) => b.dist - a.dist);
-  const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>`).join('');
+  const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>${(p1.p('Help') ?? 0) ? 'AJUDA ' + p1.p('Help') + ' · ' : ''}TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>`).join('');
   $('hud').innerHTML = bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
 function draw(dt) {
   for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt);
@@ -663,11 +681,15 @@ function draw(dt) {
 function frame(t) { pollLobby(); const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
 
 // ---------------- menu ----------------
-function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f') { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
+let toastT = null;
+function toast(html) { const t = $('toast'); t.innerHTML = html; t.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => t.style.opacity = 0, 1800); }
+function helpDots(n) { return [0, 1, 2, 3].map(i => `<span style="display:inline-block;width:16px;height:16px;border-radius:50%;margin:0 3px;vertical-align:middle;background:${i < n ? '#ffd21a' : '#444'}"></span>`).join(''); }
+function setHelp(i, n) { n = clamp(n, 0, 4); S['p' + i + 'Help'] = n; save(); toast(`Ajuda ${helpDots(n)} ${HELP[n]}`); beep(n > 2 ? 880 : 520, 0.1, 0.12, 'triangle'); if (lobbyOpen) buildLobby(); }
+function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f' && !['+', '=', '-', '_'].includes(k)) { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
   if (k === 'p' || k === 'm') toggleMenu(); else if (k === 'v') { S.view = S.view === 'top' ? 'tilt' : 'top'; save(); location.reload(); }
   else if (k === 'c') { calibOn = !calibOn; calib.visible = calibOn; document.querySelectorAll('.corner').forEach(c => c.style.display = calibOn ? 'block' : 'none'); }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
-  else if (k === 'r') restart(); else if (k === 'k') paused = !paused; else if (k === 'l' || k === 'escape') showLobby(); else if (k === 't') { const n = Object.keys(LAYOUTS); S.track = n[(n.indexOf(S.track) + 1) % n.length]; save(); location.reload(); }
+  else if (k === 'r') restart(); else if (k === '+' || k === '=' || k === '-' || k === '_') setHelp(1, (S.p1Help ?? 0) + (k === '+' || k === '=' ? 1 : -1)); else if (k === 'k') paused = !paused; else if (k === 'l' || k === 'escape') showLobby(); else if (k === 't') { const n = Object.keys(LAYOUTS); S.track = n[(n.indexOf(S.track) + 1) % n.length]; save(); location.reload(); }
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); }
 function toggleMenu() { const m = $('menu'), open = m.style.display !== 'block'; m.style.display = open ? 'block' : 'none'; $('menuBtn').style.display = open ? 'none' : 'block'; if (open) buildMenu(); }
 $('menuBtn').onclick = toggleMenu;
@@ -684,7 +706,7 @@ function buildMenu() {
     <h3>Fundo (vista 3D)</h3><div class="row"><button data-bg="black" class="${S.bg === 'black' ? 'on' : ''}">Só pista (resto preto)</button><button data-bg="forest" class="${S.bg !== 'black' ? 'on' : ''}">Floresta</button></div>
     <h3>Race</h3><div class="row"><button id="mRestart">Restart</button><button id="mLobby">Escolher carros</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)'], ['loop', 'Loop (long, simple)'], ['grandprix', 'Grand Prix (long, twisty)']]) + sl('laps', 'Laps', 1, 20, 1) +
     `<h3>Cars <span style="color:#9aa0aa">${carCount()} / ${MAX}</span></h3>` + step('players', 'Humans', 'pad / keys / touch') + step('nBuddy', 'BUDDY', 'plays with the kid') + step('nPro', 'PRO', 'races to win');
-  for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
+  for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) ;
   h += `<h3>AI</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) +
     `<h3>Projection</h3>` + sl('arenaW', 'Projected width (m)', 0.8, 5, 0.01) + sl('camH', '3D depth (eye height, m)', 0.9, 5, 0.1) + sel('view', 'View', [['top', 'top-down (projector)'], ['tilt', 'tilted (screen)']]) + sel('balloon', 'Balloon', [['on', 'on'], ['off', 'off']]) +
     `<small>Lower eye height = stronger 3D lean. The ground always stays true to scale.</small>
@@ -716,15 +738,17 @@ function buildLobby() {
     return `<div class="card"><h2>Jogador ${i} <small>${i === 1 ? '· comando' : '· teclado'}</small></h2>
       <div class="skins">${SKINS.map(k => `<button class="skin ${S[p + 'Skin'] === k.id ? 'on' : ''} ${S.players > 1 && other === k.id && S[p + 'Skin'] !== k.id ? 'taken' : ''}" data-skin="${i}:${k.id}">${carSvg(k)}<div>${k.name}</div></button>`).join('')}</div>
       <div class="modes"><button data-mode="${i}:kid" class="${S[p + 'Mode'] === 'kid' ? 'on' : ''}">Fácil<br><small>vai para onde aponto</small></button><button data-mode="${i}:adult" class="${S[p + 'Mode'] !== 'kid' ? 'on' : ''}">Avançado<br><small>frente · trás · esquerda · direita</small></button></div>
+      <div class="help"><b>Ajuda</b> ${HELP.map((h, n) => `<button data-help="${i}:${n}" class="${(S[p + 'Help'] ?? 0) === n ? 'on' : ''}">${n === 0 ? '0' : '●'.repeat(n)}<small>${h}</small></button>`).join('')}</div>
       <div class="keys">${i === 1 ? 'Comando: stick para conduzir · <kbd>A</kbd>/<kbd>R2</kbd> gosma · <kbd>B</kbd>/<kbd>L2</kbd> turbo' : 'Setas para conduzir · <kbd>Espaço</kbd> turbo · <kbd>Enter</kbd> gosma'}</div></div>`; };
   $('lobby').innerHTML = `<div class="wrap"><h1>ROBO GP</h1><div class="sub">Escolhe o teu carro!</div>
     <div class="players">${card(1)}${S.players > 1 ? card(2) : ''}</div>
     <div class="row2"><b>Jogadores</b><button data-pl="1" class="${S.players === 1 ? 'on' : ''}">1</button><button data-pl="2" class="${S.players === 2 ? 'on' : ''}">2</button>
       <b style="margin-left:18px">Adversários</b>${[0, 1, 2, 3].map(n => `<button data-ai="${n}" class="${S.nPro + S.nBuddy === n ? 'on' : ''}">${n}</button>`).join('')}</div>
-    <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div></div>`;
+    <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar · Teclas <kbd>+</kbd> / <kbd>−</kbd> mudam a ajuda do jogador 1 a qualquer momento</div></div>`;
   const el = $('lobby');
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
     const o = i === '1' ? 'p2Skin' : 'p1Skin'; if (S.players > 1 && S[o] === id) S[o] = SKINS.find(k => k.id !== id).id; save(); makeCars(true); buildLobby(); });
+  el.querySelectorAll('[data-help]').forEach(b => b.onclick = () => { const [i, n] = b.dataset.help.split(':'); setHelp(+i, +n); });
   el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { const [i, m] = b.dataset.mode.split(':'); S['p' + i + 'Mode'] = m; save(); buildLobby(); });
   el.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => { S.players = +b.dataset.pl; save(); makeCars(true); buildLobby(); });
   el.querySelectorAll('[data-ai]').forEach(b => b.onclick = () => { S.nPro = +b.dataset.ai; S.nBuddy = 0; save(); makeCars(true); buildLobby(); });
