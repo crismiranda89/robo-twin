@@ -629,16 +629,93 @@ const BallGame = {
   },
   goal(p) { this.score[p]++; this.pause = now + 1.2; Object.assign(this.ball, { x: AW/2, y: AH/2, vx: 0, vy: 0 }); this.flash = { p, until: now + 1.2 }; },
   draw() {
-    ctx.fillStyle = '#2a2d34'; ctx.fillRect(0, 0, CW, CH);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
-    ctx.strokeRect(2, 2, CW-4, CH-4);
-    ctx.beginPath(); ctx.moveTo(CW/2, 0); ctx.lineTo(CW/2, CH); ctx.stroke();
-    ctx.beginPath(); ctx.arc(CW/2, CH/2, W2S(0.18), 0, 7); ctx.stroke();
+    // stadium pitch, seen from above with a low sun: mown stripes, shaded lines, 3D goals with nets, a rolling ball
+    const u = W2S(1), b = this.ball;
+    if (!this.bg || this.bg.width !== CW || this.bg.height !== CH) this.bg = this.pitch();
+    ctx.drawImage(this.bg, 0, 0);
     const gy = W2S(AH/2 - this.gh/2), gh = W2S(this.gh), gd = W2S(0.08);
-    ctx.fillStyle = COLORS[1]; ctx.fillRect(0, gy, gd, gh);       // P2 defends left? left goal scores for P2
-    ctx.fillStyle = COLORS[0]; ctx.fillRect(CW-gd, gy, gd, gh);    // right goal scores for P1
-    const b = this.ball; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(W2S(b.x), W2S(b.y), W2S(b.r), 0, 7); ctx.fill();
-    if (this.flash && now < this.flash.until) { ctx.fillStyle = COLORS[this.flash.p]; ctx.font = `bold ${W2S(0.2)}px system-ui`; ctx.textAlign = 'center'; ctx.fillText('GOAL!', CW/2, CH/2 - W2S(0.25)); }
+    // goals: shadow, net (crossed strings), frame with depth; the colour says whose goal it is
+    for (const [side, col] of [[0, COLORS[1]], [1, COLORS[0]]]) {
+      const x0 = side ? CW - gd : 0, dir = side ? 1 : -1, mouth = side ? CW - gd : gd;
+      ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fillRect(x0 + 0.012*u, gy + 0.014*u, gd, gh);
+      ctx.fillStyle = 'rgba(255,255,255,.10)'; ctx.fillRect(x0, gy, gd, gh);
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = Math.max(1, 0.002*u); ctx.beginPath();
+      for (let k = 0.012*u; k < gh; k += 0.016*u) { ctx.moveTo(x0, gy + k); ctx.lineTo(x0 + gd, gy + k); }
+      for (let k = 0.012*u; k < gd; k += 0.016*u) { ctx.moveTo(x0 + k, gy); ctx.lineTo(x0 + k, gy + gh); }
+      ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 0.012*u; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(mouth, gy); ctx.lineTo(mouth + dir*gd, gy); ctx.lineTo(mouth + dir*gd, gy + gh); ctx.lineTo(mouth, gy + gh); ctx.stroke();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.014*u;                       // posts and crossbar, white like a real goal
+      ctx.beginPath(); ctx.moveTo(mouth, gy); ctx.lineTo(mouth, gy + gh); ctx.stroke();
+      ctx.fillStyle = '#fff'; for (const y of [gy, gy + gh]) { ctx.beginPath(); ctx.arc(mouth, y, 0.011*u, 0, 7); ctx.fill(); }
+      ctx.lineCap = 'butt';
+    }
+    // ball: shadow, white sphere with shading, black patches that roll with it
+    const X = W2S(b.x), Y = W2S(b.y), R = W2S(b.r);
+    this.roll = (this.roll || 0) + Math.hypot(b.vx, b.vy) / b.r / 60; this.dir = Math.hypot(b.vx, b.vy) > 0.02 ? Math.atan2(b.vy, b.vx) : (this.dir || 0);
+    ctx.fillStyle = 'rgba(0,0,0,.32)'; ctx.beginPath(); ctx.ellipse(X + R*0.35, Y + R*0.45, R*1.05, R*0.85, 0, 0, 7); ctx.fill();
+    ctx.save(); ctx.beginPath(); ctx.arc(X, Y, R, 0, 7); ctx.clip();
+    ctx.fillStyle = '#f4f4f2'; ctx.fillRect(X - R, Y - R, 2*R, 2*R);
+    ctx.translate(X, Y); ctx.rotate(this.dir);
+    const ph = (this.roll % (Math.PI*2));
+    ctx.fillStyle = '#1d1f24';
+    for (let i = -2; i <= 2; i++) for (let j = -1; j <= 1; j++) {           // patches slide along the roll direction and wrap
+      let px = ((i * 0.9 + ph / Math.PI * 1.8) % 4.5 + 4.5) % 4.5 - 2.25, py = j * 0.95 + (i % 2 ? 0.48 : 0);
+      const d = Math.hypot(px, py); if (d > 1.25) continue;
+      const k = Math.cos(Math.min(1.5, d)) ;                                   // foreshortened near the edge
+      ctx.beginPath();
+      for (let v = 0; v < 5; v++) { const a = v / 5 * Math.PI * 2 - Math.PI/2; ctx.lineTo((px + Math.cos(a)*0.32*k) * R * 0.8, (py + Math.sin(a)*0.32) * R * 0.8); }
+      ctx.fill();
+    }
+    ctx.restore(); ctx.save();
+    const g = ctx.createRadialGradient(X - R*0.4, Y - R*0.45, R*0.1, X, Y, R);
+    g.addColorStop(0, 'rgba(255,255,255,.75)'); g.addColorStop(0.45, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(0,0,0,.45)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X, Y, R, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
+    // score on the pitch, like a stadium board
+    ctx.save(); ctx.font = `800 ${0.07*u}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const txt = `${this.score[0]}  :  ${this.score[1]}`, w = ctx.measureText(txt).width + 0.08*u, bx = CW/2 - w/2, by = 0.025*u;
+    ctx.fillStyle = 'rgba(10,14,20,.72)'; ctx.beginPath(); ctx.roundRect(bx, by, w, 0.095*u, 0.02*u); ctx.fill();
+    ctx.fillStyle = COLORS[0]; ctx.fillRect(bx, by, 0.012*u, 0.095*u); ctx.fillStyle = COLORS[1]; ctx.fillRect(bx + w - 0.012*u, by, 0.012*u, 0.095*u);
+    ctx.fillStyle = '#fff'; ctx.fillText(txt, CW/2, by + 0.014*u); ctx.restore();
+    if (this.flash && now < this.flash.until) {
+      const t = 1 - (this.flash.until - now) / 1.2, sc = 1 + 0.25 * Math.sin(Math.min(1, t * 3) * Math.PI);
+      ctx.save(); ctx.translate(CW/2, CH/2 - W2S(0.22)); ctx.scale(sc, sc);
+      ctx.font = `900 ${W2S(0.2)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = COLORS[this.flash.p]; ctx.shadowBlur = 0.06*u;
+      ctx.lineWidth = 0.012*u; ctx.strokeStyle = '#0b0e14'; ctx.strokeText('GOAL!', 0, 0);
+      ctx.fillStyle = COLORS[this.flash.p]; ctx.fillText('GOAL!', 0, 0); ctx.restore();
+      for (let i = 0; i < 40; i++) {                                         // confetti burst
+        const a = i * 2.4, r = t * W2S(0.6) * (0.5 + (i % 7) / 7), cx = CW/2 + Math.cos(a) * r, cy = CH/2 - W2S(0.22) + Math.sin(a) * r + t*t*W2S(0.3);
+        ctx.fillStyle = i % 3 ? COLORS[this.flash.p] : '#fff'; ctx.fillRect(cx, cy, 0.012*u, 0.02*u);
+      }
+    }
+  },
+  pitch() {
+    // drawn once per canvas size: grass stripes and texture, lines with a little shadow, penalty boxes, corner arcs
+    const c = document.createElement('canvas'); c.width = CW; c.height = CH; const x = c.getContext('2d'), u = W2S(1), R = rng(77);
+    x.fillStyle = '#3f8f3a'; x.fillRect(0, 0, CW, CH);
+    const n = 12; for (let i = 0; i < n; i++) { x.fillStyle = i % 2 ? '#4a9c43' : '#3f8f3a'; x.fillRect(i * CW / n, 0, CW / n + 1, CH); }
+    for (let i = 0, m = Math.round(AW * AH * 1400); i < m; i++) { x.fillStyle = R() < 0.5 ? 'rgba(20,60,20,.25)' : 'rgba(170,230,140,.18)';
+      x.fillRect(R() * CW, R() * CH, Math.max(1, 0.003*u), Math.max(2, 0.01*u)); }
+    const v = x.createRadialGradient(CW/2, CH/2, Math.min(CW, CH)*0.3, CW/2, CH/2, Math.max(CW, CH)*0.75);   // floodlight vignette
+    v.addColorStop(0, 'rgba(255,255,230,.10)'); v.addColorStop(1, 'rgba(0,0,0,.35)'); x.fillStyle = v; x.fillRect(0, 0, CW, CH);
+    const m = 0.03*u, pbw = W2S(Math.min(0.32, AW*0.16)), pbh = W2S(Math.min(AH*0.6, this.gh + 0.3)), gbw = W2S(0.1), gbh = W2S(this.gh + 0.1);
+    const lines = () => { x.beginPath();
+      x.rect(m, m, CW - 2*m, CH - 2*m); x.moveTo(CW/2, m); x.lineTo(CW/2, CH - m);
+      x.moveTo(CW/2 + W2S(0.18), CH/2); x.arc(CW/2, CH/2, W2S(0.18), 0, 7);
+      for (const s of [0, 1]) { const ex = s ? CW - m : m, d = s ? -1 : 1;
+        x.rect(Math.min(ex, ex + d*pbw), CH/2 - pbh/2, pbw, pbh); x.rect(Math.min(ex, ex + d*gbw), CH/2 - gbh/2, gbw, gbh);
+        const arc = (cx, cy, r, a0, a1) => { x.moveTo(cx + Math.cos(a0)*r, cy + Math.sin(a0)*r); x.arc(cx, cy, r, a0, a1); };
+        const r = W2S(0.12), off = pbw*0.28, base = s ? Math.PI : 0;              // the "D" outside the penalty box
+        if (r > off) { const h = Math.acos(off / r); arc(ex + d*pbw*0.72, CH/2, r, base - h, base + h); }
+        for (const y of [m, CH - m]) { const a0 = s ? (y === m ? Math.PI/2 : Math.PI) : (y === m ? 0 : -Math.PI/2); arc(ex, y, 0.03*u, a0, a0 + Math.PI/2); } }
+    };
+    x.lineWidth = Math.max(2, 0.008*u); x.lineJoin = 'round';
+    x.save(); x.translate(0.004*u, 0.005*u); x.strokeStyle = 'rgba(0,0,0,.25)'; lines(); x.stroke(); x.restore();
+    x.strokeStyle = 'rgba(255,255,255,.92)'; lines(); x.stroke();
+    x.fillStyle = '#fff'; for (const px of [CW/2, m + pbw*0.72, CW - m - pbw*0.72]) { x.beginPath(); x.arc(px, CH/2, 0.008*u, 0, 7); x.fill(); }
+    return c;
   },
   hud() { return `<span style="color:${COLORS[0]}">P1</span> ${this.score[0]} : ${this.score[1]} <span style="color:${COLORS[1]}">P2</span> — P1 scores right, P2 scores left`; },
 };
