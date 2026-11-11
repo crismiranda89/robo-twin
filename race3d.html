@@ -67,8 +67,10 @@ renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(CW, CH);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // In the tilted 3D view the arena is made deeper so that, seen in perspective, it fills the screen top to bottom
 // (no strip of plain woods at the top): try depths and keep the one whose projection covers the most screen.
+// The 3D track is planned for the SCREEN's shape (= fullscreen), not the current window, so going fullscreen fills it exactly.
+const PA = (screen.width && screen.height) ? screen.width / screen.height : CW / CH;
 function tiltDepth(aw) {
-  const cam = new THREE.PerspectiveCamera(38, CW / CH, 0.05, 60), pitch = 54 * Math.PI / 180; let best = [0, aw * CH / CW];
+  const cam = new THREE.PerspectiveCamera(38, PA, 0.05, 60), pitch = 54 * Math.PI / 180; let best = [0, aw / PA];
   for (let ah = aw * 0.4; ah <= aw * 1.8; ah += aw * 0.02) {
     const cs = [[0, 0], [aw, 0], [aw, ah], [0, ah]].map(([x, z]) => new THREE.Vector3(x, 0, z));
     const place = (d, tz) => { cam.position.set(aw/2, Math.sin(pitch) * d, tz + Math.cos(pitch) * d); cam.lookAt(aw/2, 0, tz); cam.updateMatrixWorld(); };
@@ -125,7 +127,7 @@ function fitTilt(mode) {
 function onResize(w = innerWidth, h = innerHeight) {   // no reload: reloading would drop out of fullscreen
   CW = w; CH = h; renderer.setSize(CW, CH);
   for (const c of [camTilt, camTop]) { c.aspect = CW / CH; c.updateProjectionMatrix(); }
-  S.corners = [[0,0],[CW,0],[CW,CH],[0,CH]]; save(); applyKeystone(); if (typeof T !== 'undefined') fitTilt(S.tiltMode);
+  S.corners = [[0,0],[CW,0],[CW,CH],[0,CH]]; save(); applyKeystone(); if (typeof QUAD !== 'undefined' && QUAD) fitQuad(); else if (typeof T !== 'undefined') fitTilt(S.tiltMode);
 }
 addEventListener('resize', () => onResize());
 
@@ -159,10 +161,25 @@ const wrapD = (d, per) => ((d + per/2) % per + per) % per - per/2;
 // the screen shows — the visible ground is a trapezoid, so the track reaches the left, right, top and bottom edges.
 const TILT = S.view === 'tilt';
 let QUAD = null;
-if (TILT) { S.tiltMode = 'd'; fitTilt('d');
+if (TILT) { S.tiltMode = 'd'; camTilt.aspect = PA; camTilt.updateProjectionMatrix(); fitTilt('d');
   const hit = (nx, ny) => { const v = new THREE.Vector3(nx, ny, 0.5).unproject(camTilt).sub(camTilt.position).normalize(), t = -camTilt.position.y / v.y; return [camTilt.position.x + v.x*t, camTilt.position.z + v.z*t]; };
   QUAD = { FL: hit(-1, 1), FR: hit(1, 1), NL: hit(-1, -1), NR: hit(1, -1) }; }
-const inView = (x, z, pad = 0.02) => { if (!TILT) return true; const p = new THREE.Vector3(x, 0, z).project(camTilt); return Math.abs(p.x) < 1 + pad && Math.abs(p.y) < 1 + pad; };
+// show the planned area (QUAD) on the real window: fills it exactly in fullscreen, small black bars otherwise
+function fitQuad() {
+  camTilt.aspect = CW / CH; camTilt.updateProjectionMatrix();
+  const pitch = 54 * Math.PI / 180, q = [QUAD.FL, QUAD.FR, QUAD.NL, QUAD.NR].map(([x, z]) => new THREE.Vector3(x, 0, z)), cx = q.reduce((a, v) => a + v.x, 0) / 4;
+  const z0 = Math.min(...q.map(v => v.z)), z1 = Math.max(...q.map(v => v.z));
+  const place = (d, tz) => { camTilt.position.set(cx, Math.sin(pitch) * d, tz + Math.cos(pitch) * d); camTilt.lookAt(cx, 0, tz); camTilt.updateMatrixWorld(); };
+  const inside = (d, tz) => { place(d, tz); return q.every(c => { const p = c.clone().project(camTilt); return Math.abs(p.x) <= 1.0005 && Math.abs(p.y) <= 1.0005; }); };
+  let best = null;
+  for (let tz = z0 + (z1 - z0) * 0.2; tz <= z0 + (z1 - z0) * 0.8; tz += (z1 - z0) * 0.01) { let lo = 0.05, hi = 40; if (!inside(hi, tz)) continue;
+    for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (inside(m, tz)) hi = m; else lo = m; } if (!best || hi < best[0]) best = [hi, tz]; }
+  if (best) place(best[0], best[1]);
+}
+if (TILT) fitQuad();
+const inView = (x, z, pad = 0.04) => { if (!QUAD) return true;   // inside the planned visible ground (convex quad), with a little slack
+  const P = [QUAD.FL, QUAD.FR, QUAD.NR, QUAD.NL]; for (let i = 0; i < 4; i++) { const [ax, az] = P[i], [bx, bz] = P[(i + 1) % 4], ex = bx - ax, ez = bz - az, L = Math.hypot(ex, ez);
+    if ((ex * (z - az) - ez * (x - ax)) / L < -pad) return false; } return true; };
 function mapUV(u, v, m) {
   if (!QUAD) return [m + u*(AW-2*m), m + v*(AH-2*m)];
   const { FL, FR, NL, NR } = QUAD, iu = m / Math.hypot(NR[0] - NL[0], NR[1] - NL[1]), iv = m / Math.hypot(NL[0] - FL[0], NL[1] - FL[1]);
