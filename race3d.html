@@ -45,11 +45,13 @@
 import * as THREE from 'three';
 
 // ---------------- settings ----------------
-const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' } };
-const DEF = { tiltMode: 'b', size: 'medium', arenaW: 1.9, track: 'bean', players: 1, nBuddy: 0, nPro: 2, laps: 5, camH: 2.0, view: 'top', balloon: 'on',
+const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' },
+  long: { w: 3.8, track: 'grandprix', name: 'Longa', laps: 3 }, xl: { w: 4.8, track: 'grandprix', name: 'Muito longa', laps: 2 } };
+const DEF = { tiltMode: 'a', size: 'long', arenaW: 3.8, track: 'grandprix', players: 1, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
   p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
+if (S.v !== 2) { Object.assign(S, { v: 2, size: 'long', arenaW: 3.8, track: 'grandprix', laps: 3, tiltMode: 'a', view: 'tilt' }); }   // one-off: switch to the long, narrow-looking track
 const save = () => { try { localStorage.setItem('robogp3d', JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -63,7 +65,7 @@ const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio)); renderer.setSize(CW, CH);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const AW = S.arenaW, AH = AW * CH / CW, TWID = 0.26;
-function setSize(k) { S.size = k; S.arenaW = SIZES[k].w; S.track = SIZES[k].track; save(); location.reload(); }
+function setSize(k) { S.size = k; S.arenaW = SIZES[k].w; S.track = SIZES[k].track; S.laps = SIZES[k].laps || 5; save(); location.reload(); }
 const scene = new THREE.Scene(), bgTop = new THREE.Color(0x000000), skyTilt = new THREE.Color(0x9fd8ff), fogTilt = new THREE.Fog(0x9fd8ff, 3, 9); scene.background = bgTop;
 
 
@@ -130,6 +132,7 @@ addEventListener('pointerup', () => { if (dragging !== null) { dragging = null; 
 const LAYOUTS = {
   oval:  [[0.25,0.88],[0.75,0.88],[0.93,0.50],[0.75,0.12],[0.25,0.12],[0.07,0.50]],
   bean:  [[0.22,0.88],[0.50,0.90],[0.78,0.88],[0.94,0.58],[0.86,0.18],[0.70,0.10],[0.60,0.30],[0.50,0.44],[0.40,0.30],[0.30,0.10],[0.14,0.18],[0.06,0.58]],
+  grandprix: [[0.18,0.92],[0.48,0.93],[0.72,0.90],[0.90,0.84],[0.94,0.66],[0.82,0.55],[0.66,0.62],[0.54,0.72],[0.40,0.66],[0.42,0.48],[0.58,0.38],[0.78,0.36],[0.92,0.26],[0.86,0.09],[0.62,0.08],[0.42,0.14],[0.26,0.08],[0.09,0.14],[0.06,0.40],[0.18,0.56],[0.12,0.74],[0.08,0.86]],
   snake: [[0.20,0.88],[0.48,0.90],[0.76,0.88],[0.94,0.62],[0.90,0.22],[0.76,0.10],[0.64,0.24],[0.60,0.46],[0.46,0.52],[0.38,0.34],[0.32,0.12],[0.16,0.12],[0.06,0.36],[0.07,0.66]],
 };
 const wrapD = (d, per) => ((d + per/2) % per + per) % per - per/2;
@@ -222,7 +225,7 @@ function skid(x, y, th, a) { gg.save(); gg.translate(x*PX, y*PX); gg.rotate(th);
 // ---------------- lights ----------------
 scene.add(new THREE.HemisphereLight(0xfff8e8, 0x6fae6a, 1.25));
 const sun = new THREE.DirectionalLight(0xfff2d6, 2.3); sun.position.set(AW/2 - 0.9, 2.2, AH/2 - 0.7); sun.target.position.set(AW/2, 0, AH/2);
-sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.003;
+sun.castShadow = true; sun.shadow.mapSize.set(AW > 3 ? 4096 : 2048, AW > 3 ? 4096 : 2048); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.003;
 Object.assign(sun.shadow.camera, { left: -AW*0.75, right: AW*0.75, top: AW*0.6, bottom: -AW*0.6, near: 0.5, far: 6 }); scene.add(sun, sun.target);
 
 // ---------------- helpers ----------------
@@ -277,7 +280,8 @@ const gantry = new THREE.Group(), lamps = [];
   list.forEach(([x, z], i) => { d.position.set(x, 0.016, z); d.updateMatrix(); im.setMatrixAt(i, d.matrix); im.setColorAt(i, new THREE.Color([0x1a1b1f, 0xff2d3f, 0xffffff][i % 3])); placed.push({ x, z, r: 0.016 }); });
   im.castShadow = im.receiveShadow = true; scene.add(im); }
 // cones and hay bales beside the track
-for (let k = 0; k < 40; k++) { const p = T.pts[(R()*T.N) | 0], side = R() < 0.5 ? -1 : 1, off = side * (T.tw/2 + 0.055 + R()*0.03), x = p.x - Math.sin(p.a)*off, z = p.y + Math.cos(p.a)*off;
+const AREA = Math.min(4, AW * AH / (1.9 * 1.07));   // more scenery on bigger arenas
+for (let k = 0; k < 40 * Math.min(2.5, T.per / 4); k++) { const p = T.pts[(R()*T.N) | 0], side = R() < 0.5 ? -1 : 1, off = side * (T.tw/2 + 0.055 + R()*0.03), x = p.x - Math.sin(p.a)*off, z = p.y + Math.cos(p.a)*off;
   if (!clear(x, z, 0.015, 0.02)) continue; placed.push({ x, z, r: 0.02 });
   if (R() < 0.5) { scene.add(mesh(new THREE.ConeGeometry(0.011, 0.03, 10), std(0xff6a00), x, 0.015, z)); scene.add(mesh(new THREE.BoxGeometry(0.026, 0.003, 0.026), std(0xff6a00), x, 0.0015, z)); }
   else { const b = mesh(new THREE.BoxGeometry(0.045, 0.024, 0.026), std(0xf2c94c, { roughness: 1 }), x, 0.012, z); b.rotation.y = -p.a; scene.add(b); } }
@@ -287,10 +291,10 @@ for (let k = 0; k < 6; k++) { const p = tryPlace(0.012, 0.03, 60); if (!p) conti
   const f = mesh(new THREE.BoxGeometry(0.05, 0.03, 0.002), std(col, { side: THREE.DoubleSide }), 0.026, 0, 0), piv = new THREE.Group(); piv.add(f); piv.position.set(p.x, 0.142, p.z); scene.add(piv);
   const ph = R()*6; anim.push(t => { piv.rotation.y = 0.6 + Math.sin(t*3 + ph) * 0.5; }); }
 // forest, bushes, flowers
-for (let k = 0; k < 70; k++) { const s = 0.75 + R()*0.9, p = tryPlace(0.05*s, 0, 30); if (!p) continue; const r = R(); tree(p.x, p.z, s, r < 0.25 ? 'pine' : r < 0.8 ? (R()*3) | 0 : 3 + ((R()*3) | 0)); }
-for (let k = 0; k < 60; k++) { const p = tryPlace(0.02, 0, 20); if (!p) continue; const b = mesh(new THREE.IcosahedronGeometry(0.014 + R()*0.014, 1), LEAF[(R()*3) | 0], p.x, 0.012, p.z); b.scale.y = 0.7; scene.add(b); }
-{ const n = 260, im = new THREE.InstancedMesh(new THREE.SphereGeometry(0.005, 6, 5), std(0xffffff, { roughness: 0.5 }), n), d = new THREE.Object3D(), cols = [0xffffff, 0xffe14a, 0xff7ab8, 0xff4a4a, 0xb48cff, 0x7ad7ff]; let i = 0;
-  for (let c = 0; c < 26; c++) { const cx = R()*AW, cz = R()*AH, col = new THREE.Color(cols[(R()*cols.length) | 0]);
+for (let k = 0; k < 70 * AREA; k++) { const s = 0.75 + R()*0.9, p = tryPlace(0.05*s, 0, 30); if (!p) continue; const r = R(); tree(p.x, p.z, s, r < 0.25 ? 'pine' : r < 0.8 ? (R()*3) | 0 : 3 + ((R()*3) | 0)); }
+for (let k = 0; k < 60 * AREA; k++) { const p = tryPlace(0.02, 0, 20); if (!p) continue; const b = mesh(new THREE.IcosahedronGeometry(0.014 + R()*0.014, 1), LEAF[(R()*3) | 0], p.x, 0.012, p.z); b.scale.y = 0.7; scene.add(b); }
+{ const n = Math.round(260 * AREA), im = new THREE.InstancedMesh(new THREE.SphereGeometry(0.005, 6, 5), std(0xffffff, { roughness: 0.5 }), n), d = new THREE.Object3D(), cols = [0xffffff, 0xffe14a, 0xff7ab8, 0xff4a4a, 0xb48cff, 0x7ad7ff]; let i = 0;
+  for (let c = 0; c < 26 * AREA; c++) { const cx = R()*AW, cz = R()*AH, col = new THREE.Color(cols[(R()*cols.length) | 0]);
     for (let k = 0; k < 10 && i < n; k++) { const x = cx + (R() - 0.5)*0.12, z = cz + (R() - 0.5)*0.12; if (trackD(x, z) < T.tw/2 + 0.05) continue; d.position.set(x, 0.006, z); d.updateMatrix(); im.setMatrixAt(i, d.matrix); im.setColorAt(i++, col); } }
   im.count = i; scene.add(im); }
 // woods all round the arena (seen in the tilted view)
@@ -553,7 +557,7 @@ function buildMenu() {
     <h3>Track size</h3><div class="row">${Object.entries(SIZES).map(([k, v]) => `<button data-size="${k}" class="${S.size === k ? 'on' : ''}">${v.name}<small>${v.w} m</small></button>`).join('')}</div>
     <div class="row"><button data-view="tilt" class="${S.view === 'tilt' ? 'on' : ''}">3D inclinado</button><button data-view="top" class="${S.view === 'top' ? 'on' : ''}">De cima (robôs)</button><button id="mFs">⛶ Ecrã inteiro</button></div>
     <h3>Enquadramento 3D</h3>${Object.entries(TILT_MODES).map(([k, v]) => `<div class="row"><button data-tilt="${k}" class="${S.tiltMode === k ? 'on' : ''}" style="flex:1;text-align:left">${v.name}</button></div>`).join('')}<small>Teclas 1–4 mudam na hora.</small>
-    <h3>Race</h3><div class="row"><button id="mRestart">Restart</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)']]) + sl('laps', 'Laps', 1, 20, 1) +
+    <h3>Race</h3><div class="row"><button id="mRestart">Restart</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)'], ['grandprix', 'Grand Prix (long)']]) + sl('laps', 'Laps', 1, 20, 1) +
     `<h3>Cars <span style="color:#9aa0aa">${carCount()} / ${MAX}</span></h3>` + step('players', 'Humans', 'pad / keys / touch') + step('nBuddy', 'BUDDY', 'plays with the kid') + step('nPro', 'PRO', 'races to win');
   for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
   h += `<h3>AI</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) +
