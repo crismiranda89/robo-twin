@@ -1058,6 +1058,7 @@ function buildSettings() {
   let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button></div><a href="https://192.168.68.200:8444/inicio" title="Voltar à página de início da casa" style="color:inherit;text-decoration:none;font-size:13px;opacity:.8;margin-left:auto;margin-right:10px">← Início</a><button id="menuClose">✕</button></div>`;
   if (menuTab === 'game') {
     h += `<h3>Game</h3><div class="row"><button data-game="race" class="${S.game === 'race' ? 'on' : ''}">Race</button><button data-game="ball" class="${S.game === 'ball' ? 'on' : ''}">Ball</button><button data-act="reset">Restart</button></div>`;
+    h += `<div class="row"><a href="race3d.html" style="color:inherit">🏎️ Robo GP 3D</a> · <a href="tanks.html" style="color:inherit">🪖 Beach Tanks</a></div>`;
     h += sel('track', 'Track', [['auto', 'auto (fits the floor)'], ...LAYOUT_NAMES.map(n => [n, n])]);
     h += `<h3>Cars on the track <span class="dim">${carCount()} / ${MAX_CARS}</span></h3>`;
     h += step('players', 'Humans', 'pad / keys / touch');
