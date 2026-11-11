@@ -503,10 +503,9 @@ class Car {
     if (phase !== 'race' || this.done) { this.cmd = { v: 0, w: 0 }; this.turbo = false; return; }
     if (this.ai) { this.cmd = this.ai.drive(this); return; }
     if (inp.fire) this.shoot();
-    // turbo button: hold for extra speed while the tank lasts (~3 s), refills when released
-    const want = inp.boost && this.energy > 0.02 && (this.turbo || this.energy > 0.15);
-    if (want && !this.turbo && engines[this.i]) engines[this.i].spool();
-    this.turbo = want; this.energy = clamp(this.energy + (this.turbo ? -0.33 : 0.16) * DT, 0, 1);
+    // turbo: ONE per lap. A press fires the whole ~3 s burst; the tank only refills when crossing the finish line.
+    if (inp.boost && !this.turbo && this.energy >= 0.999) { this.turbo = true; if (engines[this.i]) engines[this.i].spool(); }
+    if (this.turbo) { this.energy = Math.max(0, this.energy - 0.33 * DT); if (this.energy <= 0) this.turbo = false; }
     const vmax = this.speedLimit; let v, w;
     if (this.p('Mode') === 'kid') {   // go where the stick points (as the child sees it); gentle pull back onto the track
       const rot = { bottom: 0, left: -Math.PI/2, top: Math.PI, right: Math.PI/2 }[this.p('Seat')], c = Math.cos(rot), s = Math.sin(rot);
@@ -530,7 +529,7 @@ class Car {
     this.x = clamp(this.x, this.r, AW - this.r); this.y = clamp(this.y, this.r, AH - this.r);
     const L = T.locate(this, this.hint); this.hint = L.i; this.dist += wrapD(L.s - this.lastS, T.per); this.lastS = L.s; this.off = L.d > T.tw/2;
     const laps = Math.floor(this.dist / T.per + 1e-9);
-    if (phase === 'race' && laps > this.laps) { this.laps = laps; if (laps >= 1) { this.last = now - this.lapStart; if (!this.best || this.last < this.best) this.best = this.last; beep(880, 0.1, 0.1, 'sine'); } this.lapStart = now;
+    if (phase === 'race' && laps > this.laps) { this.laps = laps; if (laps >= 1 && !this.turbo) { this.energy = 1; if (!this.ai) toast(`<span style="color:${'#' + this.col.toString(16).padStart(6, '0')}">${this.name}</span> · TURBO pronto!`); } if (laps >= 1) { this.last = now - this.lapStart; if (!this.best || this.last < this.best) this.best = this.last; beep(880, 0.1, 0.1, 'sine'); } this.lapStart = now;
       if (laps > S.laps && !winner) finish(this); }
   }
   sync(dt) {
@@ -669,7 +668,7 @@ function tick(dt) {
 }
 let acc = 0, last = performance.now(), hudT = 0, gT = 0;
 function hud() { const rank = [...cars].sort((a, b) => b.dist - a.dist);
-  const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>${(p1.p('Help') ?? 0) ? 'AJUDA ' + p1.p('Help') + ' · ' : ''}TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>`).join('');
+  const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>${(p1.p('Help') ?? 0) ? 'AJUDA ' + p1.p('Help') + ' · ' : ''}TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span> <small>${p1.turbo ? 'A FUNDO!' : p1.energy >= 0.999 ? 'pronto' : 'próxima volta'}</small></div>`).join('');
   $('hud').innerHTML = bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
 function draw(dt) {
   for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt);
@@ -711,7 +710,7 @@ function buildMenu() {
   h += `<h3>AI</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) +
     `<h3>Projection</h3>` + sl('arenaW', 'Projected width (m)', 0.8, 5, 0.01) + sl('camH', '3D depth (eye height, m)', 0.9, 5, 0.1) + sel('view', 'View', [['top', 'top-down (projector)'], ['tilt', 'tilted (screen)']]) + sel('balloon', 'Balloon', [['on', 'on'], ['off', 'off']]) +
     `<small>Lower eye height = stronger 3D lean. The ground always stays true to scale.</small>
-    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>K</kbd> pause · <kbd>L</kbd> escolher carros<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo + <kbd>Shift</kbd> turbo · P2 setas + <kbd>Enter</kbd> gosma + <kbd>Espaço</kbd> turbo · pad: stick · A/R1/R2 goo · B/L1/L2 turbo</small>
+    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>K</kbd> pause · <kbd>L</kbd> escolher carros<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo + <kbd>Shift</kbd> turbo · P2 setas + <kbd>Enter</kbd> gosma + <kbd>Espaço</kbd> turbo (1 por volta) · pad: stick · A/R1/R2 goo · B/L1/L2 turbo</small>
     <div class="row" style="margin-top:12px"><button id="mDef">Reset everything</button></div>`;
   const el = $('menu'); el.innerHTML = h;
   $('mClose').onclick = toggleMenu; $('mFs').onclick = fullscreen;
@@ -740,7 +739,7 @@ function buildLobby() {
       <div class="skins">${SKINS.map(k => `<button class="skin ${S[p + 'Skin'] === k.id ? 'on' : ''} ${S.players > 1 && other === k.id && S[p + 'Skin'] !== k.id ? 'taken' : ''}" data-skin="${i}:${k.id}">${carSvg(k)}<div>${k.name}</div></button>`).join('')}</div>
       <div class="modes"><button data-mode="${i}:kid" class="${S[p + 'Mode'] === 'kid' ? 'on' : ''}">Fácil<br><small>vai para onde aponto</small></button><button data-mode="${i}:adult" class="${S[p + 'Mode'] !== 'kid' ? 'on' : ''}">Avançado<br><small>frente · trás · esquerda · direita</small></button></div>
       <div class="help"><b>Ajuda</b> ${HELP.map((h, n) => `<button data-help="${i}:${n}" class="${(S[p + 'Help'] ?? 0) === n ? 'on' : ''}">${n === 0 ? '0' : '●'.repeat(n)}<small>${h}</small></button>`).join('')}</div>
-      <div class="keys">${i === 1 ? 'Comando: stick para conduzir · <kbd>A</kbd>/<kbd>R2</kbd> gosma · <kbd>B</kbd>/<kbd>L2</kbd> turbo' : 'Setas para conduzir · <kbd>Espaço</kbd> turbo · <kbd>Enter</kbd> gosma'}</div></div>`; };
+      <div class="keys">${i === 1 ? 'Comando: stick para conduzir · <kbd>A</kbd>/<kbd>R2</kbd> gosma · <kbd>B</kbd>/<kbd>L2</kbd> turbo (1 por volta)' : 'Setas para conduzir · <kbd>Espaço</kbd> turbo (1 por volta) · <kbd>Enter</kbd> gosma'}</div></div>`; };
   $('lobby').innerHTML = `<div class="wrap"><h1>ROBO GP</h1><div class="sub">Escolhe o teu carro!</div>
     <div class="players">${card(1)}${S.players > 1 ? card(2) : ''}</div>
     <div class="row2"><b>Jogadores</b><button data-pl="1" class="${S.players === 1 ? 'on' : ''}">1</button><button data-pl="2" class="${S.players === 2 ? 'on' : ''}">2</button>
@@ -748,7 +747,7 @@ function buildLobby() {
     <div class="row2"><b>Dificuldade</b>${[['Fáceis', 45], ['Médios', 70], ['Difíceis', 95]].map(([t, v]) => `<button data-skill="${v}" class="${Math.abs(S.aiSkill - v) < 13 ? 'on' : ''}">${t}</button>`).join('')}</div>
     <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div>
     <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor<br>
-      Jogador 1 (comando): stick conduz · A / R2 gosma · B / L2 turbo &nbsp;·&nbsp; Jogador 2 (teclado): setas conduzem · Espaço turbo · Enter gosma</div></div>`;
+      Jogador 1 (comando): stick conduz · A / R2 gosma · B / L2 turbo (1 por volta) &nbsp;·&nbsp; Jogador 2 (teclado): setas conduzem · Espaço turbo (1 por volta) · Enter gosma</div></div>`;
   const el = $('lobby');
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
     const o = i === '1' ? 'p2Skin' : 'p1Skin'; if (S.players > 1 && S[o] === id) S[o] = SKINS.find(k => k.id !== id).id; save(); makeCars(true); buildLobby(); });
