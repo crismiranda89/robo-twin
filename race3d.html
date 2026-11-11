@@ -18,6 +18,7 @@
   #menu select, #menu button, #menuBtn { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 9px; font:inherit; }
   #menu button.on { background:#1a73c9; border-color:#1a73c9; } #menu input[type=range] { width:110px; accent-color:#4aa3ff; } #menu .v { width:40px; text-align:right; }
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
+  #muteBtn { position:absolute; top:10px; right:140px; z-index:35; font:600 15px system-ui; padding:7px 10px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   #fsBtn { position:absolute; top:10px; right:96px; z-index:35; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   :fullscreen #fsBtn { display:none; }
   #toast { position:absolute; left:50%; bottom:14%; transform:translateX(-50%); z-index:15; padding:12px 26px; border-radius:30px; background:rgba(20,22,28,.85); color:#fff; font:800 28px system-ui; opacity:0; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
@@ -59,7 +60,7 @@
 <div id="hud"></div><div id="banner"></div><div id="toast"></div>
 <div class="stick" id="stick0"><div class="knob"></div></div><div class="stick" id="stick1"><div class="knob"></div></div>
 <button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button><button class="goo boost" id="boost0">TURBO</button><button class="goo boost" id="boost1">TURBO</button>
-<button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button>
+<button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button><button id="muteBtn" title="Som">🔊</button>
 <div id="menu"></div>
 <div id="lobby"></div>
 
@@ -407,7 +408,8 @@ const SMOKE = new Pool(260, THREE.NormalBlending), GLOW = new Pool(320, THREE.Ad
 function burst(x, z, col, n = 14) { for (let i = 0; i < n; i++) { const a = Math.random()*7, sp = rnd(0.1, 0.6); GLOW.spawn({ x, y: 0.04, z, vx: Math.cos(a)*sp, vz: Math.sin(a)*sp, vy: rnd(0.1, 0.5), life: rnd(0.3, 0.7), s0: 0.03, s1: 0.008, c0: col, g: 1.2 }); } }
 
 // ---------------- sound ----------------
-let AC = null; const unlock = () => { if (!AC) try { AC = new AudioContext(); } catch (e) {} if (AC && AC.state === 'suspended') AC.resume(); };
+let AC = null; const unlock = () => { if (!AC) try { AC = new AudioContext(); } catch (e) {} if (AC && AC.state === 'suspended' && !S.mute) AC.resume(); };
+function setMute(m) { S.mute = m; save(); const b = document.getElementById('muteBtn'); if (b) b.textContent = m ? '🔇' : '🔊'; if (AC) m ? AC.suspend() : AC.resume(); }
 addEventListener('keydown', unlock); addEventListener('pointerdown', unlock);
 // engine sound for the yellow car (P1): pitch follows speed, a hiss + whistle while the turbo is on
 function makeEngine() { return { on: false,
@@ -515,9 +517,14 @@ class Car {
       if (sp > 0.03) { const err = angDiff(Math.atan2(dy, dx), this.th); w = clamp(err * 7, -WMAX, WMAX); v = sp * Math.max(0, Math.cos(err)) ** 3; } else { v = 0; w = 0; }
     } else { v = -inp.ly * vmax; w = (inp.rx || inp.lx) * WMAX; }
     const H = this.p('Help') ?? 0;
-    if (H >= 2) { const ap = autoPilot(this), gas = this.p('Mode') === 'kid' ? Math.min(1, Math.hypot(inp.lx, inp.ly)) : Math.max(0, -inp.ly);
+    if (H >= 2) { const ap = autoPilot(this); let gas;
+      if (this.p('Mode') === 'kid') {   // the stick must point (roughly) where the car is heading, as the child sees it
+        const rot = { bottom: 0, left: -Math.PI/2, top: Math.PI, right: Math.PI/2 }[this.p('Seat')], c = Math.cos(rot), sn = Math.sin(rot);
+        const sx = inp.lx*c - inp.ly*sn, sy = inp.lx*sn + inp.ly*c, mag = Math.min(1, Math.hypot(sx, sy));
+        gas = mag > 0.05 && Math.cos(Math.atan2(sy, sx) - this.th) > 0 ? mag : 0;
+      } else gas = Math.max(0, -inp.ly);
       if (H === 2) v = Math.min(v, ap.vt + 0.02);                                     // brakes before the bends for him
-      else if (H === 3) { v = gas * Math.min(vmax, ap.vt * 1.1); w = 0.75 * ap.w + 0.25 * w; }   // steers mostly by itself
+      else if (H === 3) { v = gas * Math.min(vmax, ap.vt * 1.1); w = 0.55 * ap.w + 0.45 * w; }   // steers mostly by itself
       else { v = gas * Math.min(vmax, ap.vt); w = ap.w; } }                           // full auto steering: stick = accelerator
     this.cmd = { v, w };
   }
@@ -695,6 +702,7 @@ function toggleMenu() { const m = $('menu'), open = m.style.display !== 'block';
 $('menuBtn').onclick = toggleMenu;
 const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
 $('fsBtn').onclick = fullscreen;
+$('muteBtn').onclick = () => setMute(!S.mute); setMute(!!S.mute);
 
 function buildMenu() {
   const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}">${S[k]}</span></div>`;
@@ -746,7 +754,7 @@ function buildLobby() {
       <b style="margin-left:18px">Adversários</b>${[0, 1, 2, 3].map(n => `<button data-ai="${n}" class="${S.nPro + S.nBuddy === n ? 'on' : ''}">${n}</button>`).join('')}</div>
     <div class="row2"><b>Dificuldade</b>${[['Fáceis', 45], ['Médios', 70], ['Difíceis', 95]].map(([t, v]) => `<button data-skill="${v}" class="${Math.abs(S.aiSkill - v) < 13 ? 'on' : ''}">${t}</button>`).join('')}</div>
     <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div>
-    <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor<br>
+    <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · 🔊 botão do som · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor<br>
       Jogador 1 (comando): stick conduz · A / R2 gosma · B / L2 turbo (1 por volta) &nbsp;·&nbsp; Jogador 2 (teclado): setas conduzem · Espaço turbo (1 por volta) · Enter gosma</div></div>`;
   const el = $('lobby');
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
