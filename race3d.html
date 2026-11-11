@@ -20,6 +20,23 @@
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
   #fsBtn { position:absolute; top:10px; right:96px; z-index:8; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   :fullscreen #fsBtn { display:none; }
+  #lobby { position:absolute; inset:0; z-index:20; display:none; background:rgba(5,8,14,.62); overflow:auto; font:16px/1.35 system-ui,sans-serif; }
+  #lobby .wrap { max-width:1100px; margin:3vh auto; padding:0 16px; }
+  #lobby h1 { margin:0 0 4px; text-align:center; font:900 64px system-ui; letter-spacing:.04em; color:#fff; text-shadow:0 4px 24px rgba(255,170,0,.6); }
+  #lobby .sub { text-align:center; color:#cfd6e4; margin-bottom:14px; }
+  #lobby .players { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+  #lobby .card { flex:1 1 440px; max-width:520px; background:rgba(28,31,40,.9); border:2px solid rgba(255,255,255,.12); border-radius:18px; padding:14px 16px; }
+  #lobby .card h2 { margin:0 0 8px; font-size:22px; color:#fff; } #lobby .card h2 small { font-size:14px; color:#9aa6bb; font-weight:500; }
+  #lobby .skins { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  #lobby .skin { background:#262a35; border:3px solid transparent; border-radius:14px; padding:6px 4px 4px; color:#e9edf5; cursor:pointer; font:600 13px system-ui; }
+  #lobby .skin.on { border-color:#ffd21a; background:#353a48; transform:scale(1.04); box-shadow:0 0 18px rgba(255,210,26,.45); }
+  #lobby .skin.taken { opacity:.35; }
+  #lobby .modes { display:flex; gap:8px; margin-top:10px; } #lobby .modes button, #lobby .row2 button { flex:1; background:#262a35; color:#e9edf5; border:2px solid #3b4152; border-radius:12px; padding:9px 6px; font:600 14px system-ui; cursor:pointer; }
+  #lobby .modes button.on, #lobby .row2 button.on { background:#1a73c9; border-color:#1a73c9; }
+  #lobby .keys { margin-top:8px; color:#aeb7c7; font-size:13px; } #lobby kbd { background:#3b4152; border-radius:4px; padding:0 5px; color:#fff; }
+  #lobby .row2 { display:flex; gap:8px; align-items:center; justify-content:center; margin:14px auto 0; max-width:700px; color:#dfe5ef; } #lobby .row2 b { min-width:120px; }
+  #lobby .go { display:block; margin:18px auto 6px; padding:16px 60px; font:900 30px system-ui; color:#2a1a00; background:linear-gradient(#ffe066, #ffb000); border:0; border-radius:40px; cursor:pointer; box-shadow:0 6px 24px rgba(255,176,0,.5); }
+  #lobby .hint { text-align:center; color:#9aa6bb; font-size:13px; }
   #menuBtn { position:absolute; top:10px; right:10px; z-index:8; font-weight:600; padding:7px 12px; background:rgba(32,34,40,.82); border:0; cursor:pointer; }
   kbd { background:#555a66; border-radius:3px; padding:0 4px; }
   .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #ffb000; border-radius:50%; z-index:7; cursor:grab; display:none; }
@@ -39,6 +56,7 @@
 <button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button><button class="goo boost" id="boost0">TURBO</button><button class="goo boost" id="boost1">TURBO</button>
 <button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button>
 <div id="menu"></div>
+<div id="lobby"></div>
 
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
 <script type="module">
@@ -47,12 +65,13 @@ import * as THREE from 'three';
 // ---------------- settings ----------------
 const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' },
   long: { w: 5.5, track: 'loop', name: 'Longa', laps: 3 }, xl: { w: 7.0, track: 'loop', name: 'Muito longa', laps: 2 } };   // 3D view: the camera zooms in to fill the screen, so the world is wider
-const DEF = { bg: 'black', tiltMode: 'd', size: 'long', arenaW: 5.5, track: 'loop', players: 1, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
-  p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
+const DEF = { bg: 'black', tiltMode: 'd', size: 'long', arenaW: 5.5, track: 'loop', players: 2, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
+  p1Skin: 'red', p2Skin: 'yellow', p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
 if ((S.v || 0) < 3) Object.assign(S, { size: 'long', track: 'loop', laps: 3, view: 'tilt' });   // one-off: switch to the long track
 if ((S.v || 0) < 5) { S.tiltMode = 'd'; S.bg = 'black'; if (SIZES[S.size]) S.arenaW = SIZES[S.size].w; if (S.size === 'long' || S.size === 'xl') S.track = 'loop'; S.v = 5; }
+if ((S.v || 0) < 6) { Object.assign(S, { players: 2, p1Mode: 'kid', p2Mode: 'adult', p1Skin: S.p1Skin || 'red', p2Skin: S.p2Skin || 'yellow', nPro: Math.min(S.nPro ?? 2, 2), v: 6 }); }
 const save = () => { try { localStorage.setItem('robogp3d', JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -385,7 +404,7 @@ function burst(x, z, col, n = 14) { for (let i = 0; i < n; i++) { const a = Math
 let AC = null; const unlock = () => { if (!AC) try { AC = new AudioContext(); } catch (e) {} if (AC && AC.state === 'suspended') AC.resume(); };
 addEventListener('keydown', unlock); addEventListener('pointerdown', unlock);
 // engine sound for the yellow car (P1): pitch follows speed, a hiss + whistle while the turbo is on
-const engine = { on: false,
+function makeEngine() { return { on: false,
   start() { if (this.on || !AC) return; this.on = true; const o1 = AC.createOscillator(), o2 = AC.createOscillator(), f = AC.createBiquadFilter(), g = AC.createGain();
     o1.type = 'sawtooth'; o2.type = 'square'; o2.detune.value = 9; f.type = 'lowpass'; f.frequency.value = 500; g.gain.value = 0;
     o1.connect(f); o2.connect(f); f.connect(g).connect(AC.destination); o1.start(); o2.start();
@@ -400,21 +419,43 @@ const engine = { on: false,
     this.ng.gain.setTargetAtTime(running && tb ? 0.05 : 0, t, 0.06); this.wh.frequency.setTargetAtTime(1700 + 500*k, t, 0.1); this.wg.gain.setTargetAtTime(running && tb ? 0.018 : 0, t, 0.08); },
   spool() { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime; o.type = 'sawtooth'; o.frequency.setValueAtTime(300, t); o.frequency.exponentialRampToValueAtTime(2200, t + 0.45);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.1); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5); o.connect(g).connect(AC.destination); o.start(); o.stop(t + 0.55); },
-};
+}; }
+const engines = [makeEngine(), makeEngine()];
 function beep(f, dur = 0.15, vol = 0.2, type = 'square', f2) { if (!AC) return; const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.value = f; if (f2) o.frequency.exponentialRampToValueAtTime(f2, AC.currentTime + dur);
   g.gain.value = vol; g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur); o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + dur); }
 
 // ---------------- cars ----------------
-const COLORS = [0xffc21a, 0x2fa8ff, 0xff3b5c, 0x3ddc6a, 0xff7a1a, 0xb26bff], VMAX = 0.45, ACC = 1.5, WMAX = 5.0, CAR_R = 0.065, DT = 1/120;
+const SKINS = [
+  { id: 'red',    name: 'Vermelho Fogo',     col: 0xff2b3a, stripe: 0xffd21a, flames: true },
+  { id: 'yellow', name: 'Amarelo Relâmpago', col: 0xffc21a, stripe: 0x16181d },
+  { id: 'blue',   name: 'Azul Turbo',        col: 0x2f8fff, stripe: 0xffffff },
+  { id: 'green',  name: 'Verde Dino',        col: 0x3ddc6a, stripe: 0x0b3d1a },
+  { id: 'pink',   name: 'Rosa Estrela',      col: 0xff6fb5, stripe: 0xffffff },
+  { id: 'purple', name: 'Roxo Galáxia',      col: 0x8b5cff, stripe: 0x66f0ff },
+  { id: 'orange', name: 'Laranja Tigre',     col: 0xff7a1a, stripe: 0x16181d, flames: true },
+  { id: 'police', name: 'Polícia',           col: 0x1a1c22, stripe: 0xffffff, police: true },
+  { id: 'gold',   name: 'Ouro',              col: 0xffcc33, stripe: 0xffffff, metal: 0.95 },
+];
+const skinById = id => SKINS.find(k => k.id === id) || SKINS[0];
+const COLORS = SKINS.map(k => k.col), VMAX = 0.45, ACC = 1.5, WMAX = 5.0, CAR_R = 0.065, DT = 1/120;
 const beamTex = canvasTex(64, 64, g => { const r = g.createLinearGradient(0, 0, 64, 0); r.addColorStop(0, 'rgba(255,250,210,.9)'); r.addColorStop(1, 'rgba(255,250,210,0)'); g.fillStyle = r; g.beginPath(); g.moveTo(0, 26); g.lineTo(64, 0); g.lineTo(64, 64); g.lineTo(0, 38); g.fill(); });
-function makeCar(col) {
+const flameTex = canvasTex(128, 64, g => { const fl = (c, s) => { g.fillStyle = c; g.beginPath(); g.moveTo(0, 32 - 22*s);
+  for (let i = 0; i <= 6; i++) { const x = 12 + i * 18, y = 32 + (i % 2 ? -1 : 1) * 26 * s; g.quadraticCurveTo(x - 9, 32, x, y); } g.lineTo(128, 32); for (let i = 6; i >= 0; i--) { const x = 12 + i * 18, y = 32 - (i % 2 ? -1 : 1) * 26 * s; g.quadraticCurveTo(x + 9, 32, x, y); } g.closePath(); g.fill(); };
+  fl('#ff7a00', 1); fl('#ffd21a', 0.6); });
+function makeCar(skin) {
+  const col = skin.col;
   const g = new THREE.Group(), k = 0.13 / 272, top = [[146,-6],[138,-18],[118,-28],[100,-46],[80,-54],[58,-50],[34,-42],[8,-44],[-22,-54],[-52,-64],[-84,-64],[-108,-56],[-120,-42],[-124,-16]];
   const P = top.concat(top.slice().reverse().map(([x, y]) => [x, -y])).map(([x, y]) => [(x - 11) * k, y * k]), n = P.length, mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2], sh = new THREE.Shape();
   let m0 = mid(P[n-1], P[0]); sh.moveTo(m0[0], m0[1]); for (let i = 0; i < n; i++) { const m2 = mid(P[i], P[(i+1)%n]); sh.quadraticCurveTo(P[i][0], P[i][1], m2[0], m2[1]); }
   const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.013, bevelEnabled: true, bevelThickness: 0.007, bevelSize: 0.005, bevelSegments: 4, curveSegments: 6 }); geo.rotateX(-Math.PI/2);
-  const paint = new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.35, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15 }), dark = std(0x16181d, { roughness: 0.5 }), wheel = std(0x0c0d10, { roughness: 0.9 });
+  const paint = new THREE.MeshPhysicalMaterial({ color: col, metalness: skin.metal ?? 0.35, roughness: skin.metal ? 0.18 : 0.28, clearcoat: 1, clearcoatRoughness: 0.15 }), dark = std(0x16181d, { roughness: 0.5 }), wheel = std(0x0c0d10, { roughness: 0.9 });
   const body = mesh(geo, paint, 0, 0.017, 0); g.add(body);
-  for (const z of [-0.0065, 0.0065]) g.add(mesh(new THREE.BoxGeometry(0.1, 0.0012, 0.0045), std(0xffffff, { roughness: 0.4 }), 0.002, 0.0375, z, false));
+  for (const z of [-0.0065, 0.0065]) g.add(mesh(new THREE.BoxGeometry(0.1, 0.0012, 0.0045), std(skin.stripe, { roughness: 0.4 }), 0.002, 0.0375, z, false));
+  if (skin.flames) for (const z of [-0.026, 0.026]) { const f = flat(0.06, 0.016, new THREE.MeshBasicMaterial({ map: flameTex, transparent: true, depthWrite: false }), 0); f.position.set(0.03, 0.0372, z); g.add(f); }
+  let siren = null;
+  if (skin.police) { g.add(mesh(new THREE.BoxGeometry(0.03, 0.0015, 0.05), std(0xffffff), 0.028, 0.0372, 0, false));
+    const red = new THREE.MeshBasicMaterial({ color: 0xff1a1a }), blue = new THREE.MeshBasicMaterial({ color: 0x1a6bff });
+    siren = [mesh(new THREE.BoxGeometry(0.008, 0.006, 0.012), red, -0.012, 0.052, -0.008, false), mesh(new THREE.BoxGeometry(0.008, 0.006, 0.012), blue, -0.012, 0.052, 0.008, false)]; siren.forEach(m => g.add(m)); }
   const cab = mesh(new THREE.SphereGeometry(1, 18, 12), new THREE.MeshPhysicalMaterial({ color: 0x0b1220, metalness: 0.6, roughness: 0.08, clearcoat: 1 }), -0.006, 0.037, 0); cab.scale.set(0.026, 0.013, 0.017); g.add(cab);
   g.add(mesh(new THREE.BoxGeometry(0.016, 0.003, 0.078), dark, -0.063, 0.056, 0));                               // rear wing, raised
   for (const z of [-0.039, 0.039]) g.add(mesh(new THREE.BoxGeometry(0.024, 0.016, 0.003), paint, -0.062, 0.05, z));
@@ -428,12 +469,12 @@ function makeCar(col) {
   const beam = flat(0.2, 0.14, new THREE.MeshBasicMaterial({ map: beamTex, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }), 0.005); beam.position.x = 0.16; g.add(beam);
   const goo = new THREE.Group(), gm = new THREE.MeshStandardMaterial({ color: 0x7dff3a, emissive: 0x2a8a00, roughness: 0.2 });
   for (const [x, y, z, r] of [[0.02, 0.04, -0.014, 0.014], [-0.022, 0.042, 0.012, 0.013], [0.04, 0.034, 0.016, 0.009], [-0.04, 0.036, -0.018, 0.01], [0, 0.048, 0, 0.011]]) goo.add(mesh(new THREE.SphereGeometry(r, 10, 8), gm, x, y, z, false));
-  goo.visible = false; g.add(goo); scene.add(g); return { g, body, glow, goo };
+  goo.visible = false; g.add(goo); scene.add(g); return { g, body, glow, goo, siren };
 }
 let now = 0, phase = 'count', tCount = 0, excite = 0, winner = null, cars = [];
 const kidCar = () => cars.find(c => !c.ai && c.p('Mode') === 'kid') || cars.find(c => !c.ai);
 class Car {
-  constructor(i, ai) { this.i = i; this.ai = ai || null; this.col = COLORS[i]; this.m = makeCar(this.col); this.r = CAR_R; this.mass = 0.35; this.reset(); }
+  constructor(i, ai, skin) { this.i = i; this.ai = ai || null; this.skin = skin || SKINS[i % SKINS.length]; this.col = this.skin.col; this.m = makeCar(this.skin); this.r = CAR_R; this.mass = 0.35; this.reset(); }
   p(k) { return S['p' + (this.i + 1) + k]; }
   get name() { return this.ai ? this.ai.label : 'P' + (this.i + 1); }
   reset() { const g = gridPos(this.i); Object.assign(this, { x: g.x, y: g.y, th: g.th, vx: 0, vy: 0, w: 0, cmd: { v: 0, w: 0 }, boostUntil: 0, padUntil: 0, gooUntil: 0, slowUntil: 0, gooCd: 0,
@@ -450,7 +491,7 @@ class Car {
     if (inp.fire) this.shoot();
     // turbo button: hold for extra speed while the tank lasts (~3 s), refills when released
     const want = inp.boost && this.energy > 0.02 && (this.turbo || this.energy > 0.15);
-    if (want && !this.turbo && this.i === 0) engine.spool();
+    if (want && !this.turbo && engines[this.i]) engines[this.i].spool();
     this.turbo = want; this.energy = clamp(this.energy + (this.turbo ? -0.33 : 0.16) * DT, 0, 1);
     const vmax = this.speedLimit; let v, w;
     if (this.p('Mode') === 'kid') {   // go where the stick points (as the child sees it); gentle pull back onto the track
@@ -477,6 +518,7 @@ class Car {
     const sp = Math.hypot(this.vx, this.vy), g = this.m.g; g.position.set(this.x, 0, this.y); g.rotation.y = -this.th;
     this.roll += (clamp(this.w * sp * 0.25, -0.18, 0.18) - this.roll) * Math.min(1, dt * 10); this.m.body.rotation.x = this.roll;
     const boosting = now < this.padUntil || now < this.boostUntil || this.turbo;
+    if (this.m.siren) { const on = Math.floor(now * 6) % 2; this.m.siren[0].visible = !!on; this.m.siren[1].visible = !on; }
     this.m.glow.material.opacity = boosting ? 0.95 : 0.5; this.m.glow.scale.setScalar(boosting ? 1.35 : 1); this.m.goo.visible = now < this.gooUntil;
     const bx = this.x - Math.cos(this.th)*0.065, bz = this.y - Math.sin(this.th)*0.065;
     if (boosting && Math.random() < 0.9) GLOW.spawn({ x: bx, y: 0.025, z: bz, vx: -this.vx*0.3 + rnd(-0.05, 0.05), vz: -this.vy*0.3 + rnd(-0.05, 0.05), life: 0.3, s0: 0.035, s1: 0.008, c0: now < this.padUntil ? '#7fe9ff' : this.turbo ? '#ffffff' : '#fff3a0', c1: now < this.padUntil ? '#1a5cff' : this.turbo ? '#ff3d00' : '#ff6a00' });
@@ -560,7 +602,7 @@ function updateItems(dt) {
 
 // ---------------- input ----------------
 const keys = new Set(); addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); hotkey(e); }); addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-const KB = [{ u: 'w', d: 's', l: 'a', r: 'd', f: 'g', b: 'shift' }, { u: 'arrowup', d: 'arrowdown', l: 'arrowleft', r: 'arrowright', f: 'enter', b: '0' }];
+const KB = [{ u: 'w', d: 's', l: 'a', r: 'd', f: 'g', b: 'shift' }, { u: 'arrowup', d: 'arrowdown', l: 'arrowleft', r: 'arrowright', f: 'enter', b: ' ' }];
 const dz = v => Math.abs(v) < 0.12 ? 0 : (v - Math.sign(v)*0.12) / 0.88, touch = [null, null], touchFire = [false, false], touchBoost = [false, false];
 function readInput(i) { const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[i]; let lx = 0, ly = 0, rx = 0, fire = touchFire[i], boost = touchBoost[i];
   if (gp) { lx = dz(gp.axes[0]); ly = dz(gp.axes[1]); rx = dz(gp.axes[2] || 0); fire ||= [0, 5, 7].some(b => gp.buttons[b] && gp.buttons[b].pressed); boost ||= [1, 4, 6].some(b => gp.buttons[b] && gp.buttons[b].pressed); }
@@ -585,8 +627,11 @@ const calib = new THREE.Group(); calib.visible = false; scene.add(calib);
 
 // ---------------- race control ----------------
 const MAX = 6, carCount = () => S.players + S.nBuddy + S.nPro;
-function makeCars() { for (const c of cars) scene.remove(c.m.g); cars = []; for (let i = 0; i < S.players; i++) cars.push(new Car(i));
-  for (const [k, kind] of [['nBuddy', 'buddy'], ['nPro', 'pro']]) for (let j = 0; j < S[k] && cars.length < MAX; j++) cars.push(new Car(cars.length, new Driver(kind))); restart(); }
+function makeCars(lobby) { for (const c of cars) scene.remove(c.m.g); cars = []; const used = new Set();
+  for (let i = 0; i < S.players; i++) { const sk = skinById(S['p' + (i + 1) + 'Skin']); used.add(sk.id); cars.push(new Car(i, null, sk)); }
+  const free = () => { const sk = SKINS.find(k => !used.has(k.id) && k.id !== 'police' && k.id !== 'gold') || SKINS[cars.length % SKINS.length]; used.add(sk.id); return sk; };
+  for (const [k, kind] of [['nBuddy', 'buddy'], ['nPro', 'pro']]) for (let j = 0; j < S[k] && cars.length < MAX; j++) cars.push(new Car(cars.length, new Driver(kind), free()));
+  restart(); if (lobby) phase = 'lobby'; }
 function restart() { phase = 'count'; tCount = 0; winner = null; excite = 0; for (const c of cars) { c.reset(); if (c.ai) Object.assign(c.ai, { vEst: 0, lane: 0, laneT: 0 }); } for (const g of goos) g.kill(); goos.length = 0; $('banner').innerHTML = ''; lastBeep = -1; }
 function finish(c) { winner = c; phase = 'done'; tCount = 0; excite = 6; $('banner').innerHTML = `<span style="color:#${c.col.toString(16).padStart(6, '0')}">${c.name}</span> WINS!<div>new race in a moment · <kbd>R</kbd> restart</div>`;
   [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.25, 0.18, 'triangle'), i * 140)); }
@@ -598,31 +643,31 @@ function tick(dt) {
     if (n !== lastBeep && n >= 1 && n <= 5) { beep(440, 0.15, 0.2); lastBeep = n; } $('banner').textContent = n < 5 ? '' : '';
     if (tCount > 0.7 * 6) { phase = 'race'; lamps.forEach(l => { l.material.color.setHex(0x1aff4a); l.material.emissive.setHex(0x00ff30); }); beep(880, 0.5, 0.25); $('banner').textContent = 'GO!'; excite = 2;
       setTimeout(() => { if (phase === 'race') $('banner').textContent = ''; }, 900); for (const c of cars) c.lapStart = now; } }
-  if (phase === 'done') { tCount += dt; if (Math.random() < 0.3) burst(rnd(0, AW), rnd(0, AH), ['#ff3b5c', '#ffc21a', '#2fa8ff', '#3ddc6a', '#ffffff'][(Math.random()*5) | 0], 10); if (tCount > 7) restart(); }
+  if (phase === 'done') { tCount += dt; if (Math.random() < 0.3) burst(rnd(0, AW), rnd(0, AH), ['#ff3b5c', '#ffc21a', '#2fa8ff', '#3ddc6a', '#ffffff'][(Math.random()*5) | 0], 10); if (tCount > 7) showLobby(); }
   cars.forEach(c => c.command(c.ai ? null : readInput(c.i))); cars.forEach(c => c.step(dt));
   for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) collide(cars[i], cars[j]);
   updateItems(dt);
 }
 let acc = 0, last = performance.now(), hudT = 0, gT = 0;
 function hud() { const rank = [...cars].sort((a, b) => b.dist - a.dist);
-  const p1 = cars.find(c => c.i === 0 && !c.ai), bar = p1 ? `<div style="margin:2px 0 6px">TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>` : '';
+  const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span></div>`).join('');
   $('hud').innerHTML = bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
 function draw(dt) {
   for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt);
-  const p1 = cars.find(c => c.i === 0 && !c.ai); engine.update(p1, !!p1 && phase === 'race' && !paused); SMOKE.update(dt); GLOW.update(dt);
+  for (let i = 0; i < 2; i++) { const h = cars.find(c => c.i === i && !c.ai); engines[i].update(h, !!h && phase === 'race' && !paused); } SMOKE.update(dt); GLOW.update(dt);
   gT += dt; if (groundDirty && gT > 0.15) { groundTex.needsUpdate = true; groundDirty = false; gT = 0; }
   hudT += dt; if (hudT > 0.15) { hud(); hudT = 0; }
   const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt && !BLACK; scene.fog = tilt && !BLACK ? fogTilt : null; scene.background = tilt && !BLACK ? skyTilt : bgTop;
   renderer.render(scene, tilt ? camTilt : camTop);
 }
-function frame(t) { const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
+function frame(t) { pollLobby(); const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
 
 // ---------------- menu ----------------
-function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase();
+function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f') { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
   if (k === 'p' || k === 'm') toggleMenu(); else if (k === 'v') { S.view = S.view === 'top' ? 'tilt' : 'top'; save(); location.reload(); }
   else if (k === 'c') { calibOn = !calibOn; calib.visible = calibOn; document.querySelectorAll('.corner').forEach(c => c.style.display = calibOn ? 'block' : 'none'); }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
-  else if (k === 'r') restart(); else if (k === ' ') paused = !paused; else if (k === 't') { const n = Object.keys(LAYOUTS); S.track = n[(n.indexOf(S.track) + 1) % n.length]; save(); location.reload(); }
+  else if (k === 'r') restart(); else if (k === 'k') paused = !paused; else if (k === 'l' || k === 'escape') showLobby(); else if (k === 't') { const n = Object.keys(LAYOUTS); S.track = n[(n.indexOf(S.track) + 1) % n.length]; save(); location.reload(); }
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); }
 function toggleMenu() { const m = $('menu'), open = m.style.display !== 'block'; m.style.display = open ? 'block' : 'none'; $('menuBtn').style.display = open ? 'none' : 'block'; if (open) buildMenu(); }
 $('menuBtn').onclick = toggleMenu;
@@ -637,26 +682,66 @@ function buildMenu() {
     <h3>Track size</h3><div class="row">${Object.entries(SIZES).map(([k, v]) => `<button data-size="${k}" class="${S.size === k ? 'on' : ''}">${v.name}<small>${v.w} m</small></button>`).join('')}</div>
     <div class="row"><button data-view="tilt" class="${S.view === 'tilt' ? 'on' : ''}">3D inclinado</button><button data-view="top" class="${S.view === 'top' ? 'on' : ''}">De cima (robôs)</button><button id="mFs">⛶ Ecrã inteiro</button></div>
     <h3>Fundo (vista 3D)</h3><div class="row"><button data-bg="black" class="${S.bg === 'black' ? 'on' : ''}">Só pista (resto preto)</button><button data-bg="forest" class="${S.bg !== 'black' ? 'on' : ''}">Floresta</button></div>
-    <h3>Race</h3><div class="row"><button id="mRestart">Restart</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)'], ['loop', 'Loop (long, simple)'], ['grandprix', 'Grand Prix (long, twisty)']]) + sl('laps', 'Laps', 1, 20, 1) +
+    <h3>Race</h3><div class="row"><button id="mRestart">Restart</button><button id="mLobby">Escolher carros</button></div>` + sel('track', 'Track', [['oval', 'Oval (small)'], ['bean', 'Bean (medium)'], ['snake', 'Snake (hard)'], ['loop', 'Loop (long, simple)'], ['grandprix', 'Grand Prix (long, twisty)']]) + sl('laps', 'Laps', 1, 20, 1) +
     `<h3>Cars <span style="color:#9aa0aa">${carCount()} / ${MAX}</span></h3>` + step('players', 'Humans', 'pad / keys / touch') + step('nBuddy', 'BUDDY', 'plays with the kid') + step('nPro', 'PRO', 'races to win');
   for (const p of ['p1', 'p2'].slice(0, S.players)) h += `<h3>Player ${p[1]}</h3>` + sel(p + 'Mode', 'Driving', [['kid', 'kid: go where I point'], ['adult', 'tank: up = go, sides = turn']]) + sel(p + 'Seat', 'Sits at', [['bottom', 'bottom'], ['top', 'top'], ['left', 'left'], ['right', 'right']]) + sl(p + 'Cap', 'Speed cap (%)', 10, 100, 5) + sl(p + 'Assist', 'Track assist (%)', 0, 100, 5);
   h += `<h3>AI</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) +
     `<h3>Projection</h3>` + sl('arenaW', 'Projected width (m)', 0.8, 5, 0.01) + sl('camH', '3D depth (eye height, m)', 0.9, 5, 0.1) + sel('view', 'View', [['top', 'top-down (projector)'], ['tilt', 'tilted (screen)']]) + sel('balloon', 'Balloon', [['on', 'on'], ['off', 'off']]) +
     `<small>Lower eye height = stronger 3D lean. The ground always stays true to scale.</small>
-    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>Space</kbd> pause<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo + <kbd>Shift</kbd> turbo · P2 arrows + <kbd>Enter</kbd> · pad: stick · A/R1/R2 goo · B/L1/L2 turbo</small>
+    <h3>Keys</h3><small><kbd>P</kbd> menu · <kbd>R</kbd> restart · <kbd>T</kbd> next track · <kbd>V</kbd> view · <kbd>C</kbd> calibrate · <kbd>F</kbd> fullscreen · <kbd>K</kbd> pause · <kbd>L</kbd> escolher carros<br>P1 <kbd>WASD</kbd> + <kbd>G</kbd> goo + <kbd>Shift</kbd> turbo · P2 setas + <kbd>Enter</kbd> gosma + <kbd>Espaço</kbd> turbo · pad: stick · A/R1/R2 goo · B/L1/L2 turbo</small>
     <div class="row" style="margin-top:12px"><button id="mDef">Reset everything</button></div>`;
   const el = $('menu'); el.innerHTML = h;
   $('mClose').onclick = toggleMenu; $('mFs').onclick = fullscreen;
   el.querySelectorAll('[data-bg]').forEach(b => b.onclick = () => { S.bg = b.dataset.bg; save(); location.reload(); });
   el.querySelectorAll('[data-size]').forEach(b => b.onclick = () => setSize(b.dataset.size));
-  el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; save(); location.reload(); }); $('mRestart').onclick = restart; $('mDef').onclick = () => { S = { ...DEF }; save(); location.reload(); };
+  el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { S.view = b.dataset.view; save(); location.reload(); }); $('mRestart').onclick = restart; $('mLobby').onclick = () => { toggleMenu(); showLobby(); }; $('mDef').onclick = () => { S = { ...DEF }; save(); location.reload(); };
   el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { const k = b.dataset.step, d = +b.dataset.d, v = S[k] + d; if (v < 0 || (k === 'players' && v > 2) || (d > 0 && carCount() >= MAX) || (d < 0 && carCount() <= 1)) return; S[k] = v; save(); makeCars(); buildMenu(); });
   el.querySelectorAll('[data-k]').forEach(inp => { const k = inp.dataset.k; inp.value = String(S[k]);
     inp.addEventListener(inp.type === 'range' ? 'change' : 'input', () => { S[k] = inp.type === 'range' ? +inp.value : inp.value; save(); if (['track', 'arenaW', 'camH', 'balloon'].includes(k)) location.reload(); if (k.endsWith('Mode')) buildMenu(); });
     if (inp.type === 'range') inp.addEventListener('input', () => { $('v_' + k).textContent = inp.value; if (!['arenaW', 'camH'].includes(k)) { S[k] = +inp.value; save(); } }); });
 }
 
-makeCars(); requestAnimationFrame(frame);
+// ---------------- landing page: pick cars, driving mode, opponents ----------------
+const hex = c => '#' + c.toString(16).padStart(6, '0');
+const carSvg = sk => `<svg viewBox="0 0 120 60" width="100%" height="54"><rect x="8" y="14" width="10" height="32" rx="3" fill="#111"/><rect x="18" y="8" width="18" height="10" rx="3" fill="#111"/><rect x="18" y="42" width="18" height="10" rx="3" fill="#111"/><rect x="74" y="9" width="16" height="9" rx="3" fill="#111"/><rect x="74" y="42" width="16" height="9" rx="3" fill="#111"/>
+  <path d="M14 20 Q14 12 30 12 L80 14 Q108 18 112 30 Q108 42 80 46 L30 48 Q14 48 14 40 Z" fill="${hex(sk.col)}" stroke="#0006" stroke-width="2"/>
+  <rect x="22" y="26" width="84" height="3" fill="${hex(sk.stripe)}"/><rect x="22" y="31" width="84" height="3" fill="${hex(sk.stripe)}"/>
+  ${sk.flames ? '<path d="M70 18 q8 4 4 8 q10 -2 8 6 q8 -2 6 6 l-24 -4 z" fill="#ffb000"/>' : ''}${sk.police ? '<rect x="44" y="22" width="8" height="8" fill="#f22"/><rect x="44" y="30" width="8" height="8" fill="#26f"/>' : ''}
+  <ellipse cx="50" cy="30" rx="15" ry="9" fill="#0b1220"/><ellipse cx="46" cy="27" rx="7" ry="3" fill="#fff5"/></svg>`;
+let lobbyOpen = false, lobbyPad = { x: 0, a: false };
+function showLobby() { lobbyOpen = true; makeCars(true); $('lobby').style.display = 'block'; $('banner').innerHTML = ''; buildLobby(); }
+function startRace() { lobbyOpen = false; $('lobby').style.display = 'none'; save(); makeCars(); unlock(); }
+function buildLobby() {
+  const card = i => { const p = 'p' + i, other = S[(i === 1 ? 'p2' : 'p1') + 'Skin'];
+    return `<div class="card"><h2>Jogador ${i} <small>${i === 1 ? '· comando' : '· teclado'}</small></h2>
+      <div class="skins">${SKINS.map(k => `<button class="skin ${S[p + 'Skin'] === k.id ? 'on' : ''} ${S.players > 1 && other === k.id && S[p + 'Skin'] !== k.id ? 'taken' : ''}" data-skin="${i}:${k.id}">${carSvg(k)}<div>${k.name}</div></button>`).join('')}</div>
+      <div class="modes"><button data-mode="${i}:kid" class="${S[p + 'Mode'] === 'kid' ? 'on' : ''}">Fácil<br><small>vai para onde aponto</small></button><button data-mode="${i}:adult" class="${S[p + 'Mode'] !== 'kid' ? 'on' : ''}">Avançado<br><small>frente · trás · esquerda · direita</small></button></div>
+      <div class="keys">${i === 1 ? 'Comando: stick para conduzir · <kbd>A</kbd>/<kbd>R2</kbd> gosma · <kbd>B</kbd>/<kbd>L2</kbd> turbo' : 'Setas para conduzir · <kbd>Espaço</kbd> turbo · <kbd>Enter</kbd> gosma'}</div></div>`; };
+  $('lobby').innerHTML = `<div class="wrap"><h1>ROBO GP</h1><div class="sub">Escolhe o teu carro!</div>
+    <div class="players">${card(1)}${S.players > 1 ? card(2) : ''}</div>
+    <div class="row2"><b>Jogadores</b><button data-pl="1" class="${S.players === 1 ? 'on' : ''}">1</button><button data-pl="2" class="${S.players === 2 ? 'on' : ''}">2</button>
+      <b style="margin-left:18px">Adversários</b>${[0, 1, 2, 3].map(n => `<button data-ai="${n}" class="${S.nPro + S.nBuddy === n ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div></div>`;
+  const el = $('lobby');
+  el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
+    const o = i === '1' ? 'p2Skin' : 'p1Skin'; if (S.players > 1 && S[o] === id) S[o] = SKINS.find(k => k.id !== id).id; save(); makeCars(true); buildLobby(); });
+  el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { const [i, m] = b.dataset.mode.split(':'); S['p' + i + 'Mode'] = m; save(); buildLobby(); });
+  el.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => { S.players = +b.dataset.pl; save(); makeCars(true); buildLobby(); });
+  el.querySelectorAll('[data-ai]').forEach(b => b.onclick = () => { S.nPro = +b.dataset.ai; S.nBuddy = 0; save(); makeCars(true); buildLobby(); });
+  $('goBtn').onclick = startRace;
+}
+function pollLobby() {   // the child can pick with the pad: stick left/right changes colour, A starts
+  if (!lobbyOpen) return; const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[0];
+  const kx = keys.has('arrowright') ? 1 : keys.has('arrowleft') ? -1 : 0, x = gp ? (Math.abs(gp.axes[0]) > 0.6 ? Math.sign(gp.axes[0]) : 0) : 0, a = gp && gp.buttons[0] && gp.buttons[0].pressed;
+  if (x && x !== lobbyPad.x) { const n = SKINS.findIndex(k => k.id === S.p1Skin); let j = n; do { j = (j + x + SKINS.length) % SKINS.length; } while (S.players > 1 && SKINS[j].id === S.p2Skin);
+    S.p1Skin = SKINS[j].id; save(); makeCars(true); buildLobby(); beep(660, 0.06, 0.08, 'triangle'); }
+  if (kx && kx !== lobbyPad.kx && S.players > 1) { const n = SKINS.findIndex(k => k.id === S.p2Skin); let j = n; do { j = (j + kx + SKINS.length) % SKINS.length; } while (SKINS[j].id === S.p1Skin);
+    S.p2Skin = SKINS[j].id; save(); makeCars(true); buildLobby(); }
+  if (a && !lobbyPad.a) startRace();
+  if (keys.has('enter') && !lobbyPad.enter) startRace();
+  lobbyPad = { x, a, kx, enter: keys.has('enter') };
+}
+showLobby(); requestAnimationFrame(frame);
 window.__race = { S, T, fitTilt, onResize, shot(mode) { fitTilt(mode); draw(0.016); return cv; }, get cars() { return cars; }, get phase() { return phase; }, pads, stars, oils, layouts: () => Object.keys(LAYOUTS).map(n => { const t = buildTrack(n); return [n, +t.per.toFixed(2), +t.minSep.toFixed(3)]; }), sim(sec) { for (let i = 0; i < sec / DT; i++) tick(DT); draw(0.016); } };
 </script>
 </body>
