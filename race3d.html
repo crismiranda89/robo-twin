@@ -12,13 +12,13 @@
   #hud small { font-weight:400; color:#aab; }
   #banner { position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); font:900 110px system-ui; color:#fff; text-shadow:0 6px 30px rgba(0,0,0,.7), 0 0 40px rgba(255,255,255,.4); z-index:6; text-align:center; pointer-events:none; }
   #banner div { font-size:24px; font-weight:600; }
-  #menu { position:absolute; right:0; top:0; bottom:0; width:320px; overflow:auto; display:none; z-index:9; padding:14px 16px; background:rgba(32,34,40,.88); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); border-left:1px solid rgba(255,255,255,.12); box-shadow:-6px 0 24px rgba(0,0,0,.35); }
+  #menu { position:absolute; right:0; top:0; bottom:0; width:320px; overflow:auto; display:none; z-index:40; padding:14px 16px; background:rgba(32,34,40,.88); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); border-left:1px solid rgba(255,255,255,.12); box-shadow:-6px 0 24px rgba(0,0,0,.35); }
   #menu h3 { margin:14px 0 6px; font-size:12px; color:#8cc8ff; text-transform:uppercase; letter-spacing:.05em; }
   #menu .row { display:flex; align-items:center; gap:8px; margin:5px 0; } #menu .row label { flex:1; } #menu small { display:block; color:#9aa0aa; font-size:12px; }
   #menu select, #menu button, #menuBtn { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 9px; font:inherit; }
   #menu button.on { background:#1a73c9; border-color:#1a73c9; } #menu input[type=range] { width:110px; accent-color:#4aa3ff; } #menu .v { width:40px; text-align:right; }
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
-  #fsBtn { position:absolute; top:10px; right:96px; z-index:8; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  #fsBtn { position:absolute; top:10px; right:96px; z-index:35; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   :fullscreen #fsBtn { display:none; }
   #toast { position:absolute; left:50%; bottom:14%; transform:translateX(-50%); z-index:15; padding:12px 26px; border-radius:30px; background:rgba(20,22,28,.85); color:#fff; font:800 28px system-ui; opacity:0; transition:opacity .3s; pointer-events:none; white-space:nowrap; }
   #lobby { position:absolute; inset:0; z-index:20; display:none; background:rgba(5,8,14,.62); overflow:auto; font:16px/1.35 system-ui,sans-serif; }
@@ -40,8 +40,9 @@
   #lobby .keys { margin-top:8px; color:#aeb7c7; font-size:13px; } #lobby kbd { background:#3b4152; border-radius:4px; padding:0 5px; color:#fff; }
   #lobby .row2 { display:flex; gap:8px; align-items:center; justify-content:center; margin:14px auto 0; max-width:700px; color:#dfe5ef; } #lobby .row2 b { min-width:120px; }
   #lobby .go { display:block; margin:18px auto 6px; padding:16px 60px; font:900 30px system-ui; color:#2a1a00; background:linear-gradient(#ffe066, #ffb000); border:0; border-radius:40px; cursor:pointer; box-shadow:0 6px 24px rgba(255,176,0,.5); }
+  #lobby .shortcuts { margin:18px auto 10px; max-width:900px; text-align:center; color:rgba(200,206,218,.38); font-size:12px; line-height:1.6; } #lobby .shortcuts b { color:rgba(200,206,218,.55); }
   #lobby .hint { text-align:center; color:#9aa6bb; font-size:13px; }
-  #menuBtn { position:absolute; top:10px; right:10px; z-index:8; font-weight:600; padding:7px 12px; background:rgba(32,34,40,.82); border:0; cursor:pointer; }
+  #menuBtn { position:absolute; top:10px; right:10px; z-index:35; font-weight:600; padding:7px 12px; background:rgba(32,34,40,.82); border:0; cursor:pointer; }
   kbd { background:#555a66; border-radius:3px; padding:0 4px; }
   .corner { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; border:3px solid #ffb000; border-radius:50%; z-index:7; cursor:grab; display:none; }
   .stick { position:absolute; bottom:24px; width:130px; height:130px; border-radius:50%; border:2px solid rgba(255,255,255,.4); background:rgba(255,255,255,.1); z-index:7; display:none; }
@@ -685,7 +686,7 @@ let toastT = null;
 function toast(html) { const t = $('toast'); t.innerHTML = html; t.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => t.style.opacity = 0, 1800); }
 function helpDots(n) { return [0, 1, 2, 3].map(i => `<span style="display:inline-block;width:16px;height:16px;border-radius:50%;margin:0 3px;vertical-align:middle;background:${i < n ? '#ffd21a' : '#444'}"></span>`).join(''); }
 function setHelp(i, n) { n = clamp(n, 0, 4); S['p' + i + 'Help'] = n; save(); toast(`Ajuda ${helpDots(n)} ${HELP[n]}`); beep(n > 2 ? 880 : 520, 0.1, 0.12, 'triangle'); if (lobbyOpen) buildLobby(); }
-function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f' && !['+', '=', '-', '_'].includes(k)) { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
+function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f' && !['+', '=', '-', '_', 'm', 'p'].includes(k)) { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
   if (k === 'p' || k === 'm') toggleMenu(); else if (k === 'v') { S.view = S.view === 'top' ? 'tilt' : 'top'; save(); location.reload(); }
   else if (k === 'c') { calibOn = !calibOn; calib.visible = calibOn; document.querySelectorAll('.corner').forEach(c => c.style.display = calibOn ? 'block' : 'none'); }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
@@ -744,10 +745,14 @@ function buildLobby() {
     <div class="players">${card(1)}${S.players > 1 ? card(2) : ''}</div>
     <div class="row2"><b>Jogadores</b><button data-pl="1" class="${S.players === 1 ? 'on' : ''}">1</button><button data-pl="2" class="${S.players === 2 ? 'on' : ''}">2</button>
       <b style="margin-left:18px">Adversários</b>${[0, 1, 2, 3].map(n => `<button data-ai="${n}" class="${S.nPro + S.nBuddy === n ? 'on' : ''}">${n}</button>`).join('')}</div>
-    <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar · Teclas <kbd>+</kbd> / <kbd>−</kbd> mudam a ajuda do jogador 1 a qualquer momento</div></div>`;
+    <div class="row2"><b>Dificuldade</b>${[['Fáceis', 45], ['Médios', 70], ['Difíceis', 95]].map(([t, v]) => `<button data-skill="${v}" class="${Math.abs(S.aiSkill - v) < 13 ? 'on' : ''}">${t}</button>`).join('')}</div>
+    <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div>
+    <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor<br>
+      Jogador 1 (comando): stick conduz · A / R2 gosma · B / L2 turbo &nbsp;·&nbsp; Jogador 2 (teclado): setas conduzem · Espaço turbo · Enter gosma</div></div>`;
   const el = $('lobby');
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
     const o = i === '1' ? 'p2Skin' : 'p1Skin'; if (S.players > 1 && S[o] === id) S[o] = SKINS.find(k => k.id !== id).id; save(); makeCars(true); buildLobby(); });
+  el.querySelectorAll('[data-skill]').forEach(b => b.onclick = () => { S.aiSkill = +b.dataset.skill; save(); buildLobby(); });
   el.querySelectorAll('[data-help]').forEach(b => b.onclick = () => { const [i, n] = b.dataset.help.split(':'); setHelp(+i, +n); });
   el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { const [i, m] = b.dataset.mode.split(':'); S['p' + i + 'Mode'] = m; save(); buildLobby(); });
   el.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => { S.players = +b.dataset.pl; save(); makeCars(true); buildLobby(); });
