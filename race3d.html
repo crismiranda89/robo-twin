@@ -18,6 +18,8 @@
   #menu select, #menu button, #menuBtn { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 9px; font:inherit; }
   #menu button.on { background:#1a73c9; border-color:#1a73c9; } #menu input[type=range] { width:110px; accent-color:#4aa3ff; } #menu .v { width:40px; text-align:right; }
   #menu .step button { width:30px; font-size:16px; padding:2px 0; } #menu .step .n { width:22px; text-align:center; font-weight:700; font-size:16px; }
+  #recBtn { position:absolute; top:10px; right:190px; z-index:35; font:600 15px system-ui; padding:7px 10px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  #recBtn.on { background:#c62828; }
   #muteBtn { position:absolute; top:10px; right:140px; z-index:35; font:600 15px system-ui; padding:7px 10px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   #fsBtn { position:absolute; top:10px; right:96px; z-index:35; font:600 15px system-ui; padding:7px 11px; background:rgba(32,34,40,.82); color:#fff; border:0; border-radius:6px; cursor:pointer; }
   :fullscreen #fsBtn { display:none; }
@@ -60,19 +62,21 @@
 <div id="hud"></div><div id="banner"></div><div id="toast"></div>
 <div class="stick" id="stick0"><div class="knob"></div></div><div class="stick" id="stick1"><div class="knob"></div></div>
 <button class="goo" id="goo0">GOO</button><button class="goo" id="goo1">GOO</button><button class="goo boost" id="boost0">TURBO</button><button class="goo boost" id="boost1">TURBO</button>
-<button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button><button id="muteBtn" title="Som">🔊</button>
+<button id="menuBtn">☰ Menu</button><button id="fsBtn" title="Ecrã inteiro (F)">⛶</button><button id="muteBtn" title="Som">🔊</button><button id="recBtn" title="Gravar a corrida: ecrã + câmara + dados">⏺ Gravar</button>
 <div id="menu"></div>
+<canvas id="camPrev" width="320" height="180" style="position:absolute;right:10px;bottom:10px;z-index:36;display:none;border-radius:8px;background:#000"></canvas>
 <div id="lobby"></div>
 
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }</script>
 <script type="module">
 import * as THREE from 'three';
+import { RealCar, settings as realSettings, fitH, invH, applyH } from './realcar.js';
 
 // ---------------- settings ----------------
 const SIZES = { small: { w: 1.3, track: 'oval', name: 'Pequena' }, medium: { w: 1.9, track: 'bean', name: 'Média' }, large: { w: 2.8, track: 'snake', name: 'Grande' },
   long: { w: 5.5, track: 'loop', name: 'Longa', laps: 3 }, xl: { w: 7.0, track: 'loop', name: 'Muito longa', laps: 2 } };   // 3D view: the camera zooms in to fill the screen, so the world is wider
 const DEF = { bg: 'black', tiltMode: 'd', size: 'long', arenaW: 5.5, track: 'loop', players: 2, nBuddy: 0, nPro: 2, laps: 3, camH: 2.0, view: 'tilt', balloon: 'on',
-  p1Help: 3, p2Help: 0, p1Skin: 'red', p2Skin: 'yellow', p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null };
+  p1Help: 3, p2Help: 0, p1Skin: 'red', p2Skin: 'yellow', p1Mode: 'kid', p1Cap: 60, p1Assist: 60, p1Seat: 'bottom', p2Mode: 'adult', p2Cap: 100, p2Assist: 0, p2Seat: 'bottom', aiSkill: 70, aiGoo: 'on', corners: null, realP: 0 };
 let S = { ...DEF };
 try { Object.assign(S, JSON.parse(localStorage.getItem('robogp3d') || '{}')); } catch (e) {}
 if ((S.v || 0) < 3) Object.assign(S, { size: 'long', track: 'loop', laps: 3, view: 'tilt' });   // one-off: switch to the long track
@@ -80,6 +84,11 @@ if ((S.v || 0) < 5) { S.tiltMode = 'd'; S.bg = 'black'; if (SIZES[S.size]) S.are
 if (S.p1Help == null) { S.p1Help = 3; S.p2Help = 0; }
 if ((S.v || 0) < 6) { Object.assign(S, { players: 2, p1Mode: 'kid', p2Mode: 'adult', p1Skin: S.p1Skin || 'red', p2Skin: S.p2Skin || 'yellow', nPro: Math.min(S.nPro ?? 2, 2), v: 6 }); }
 const save = () => { try { localStorage.setItem('robogp3d', JSON.stringify(S)); } catch (e) {} };
+// The real car (camera + Bluetooth, calibrated in real.html). realP: 0 none, 1 / 2 = that player drives it, 'ai' = an AI opponent.
+// It needs the picture at true scale: top-down view, arena = the measured width of the projection.
+const REALS = realSettings(), REAL_ON = !!S.realP && !!REALS.H;
+if (REAL_ON) { S.view = 'top'; S.arenaW = REALS.arenaW; S.track = REALS.arenaW < 1.6 ? 'oval' : REALS.arenaW < 2.4 ? 'bean' : 'snake'; }
+const RC = REAL_ON ? new RealCar() : null;
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -110,7 +119,7 @@ function tiltDepth(aw) {
   }
   return best[1];
 }
-const AW = S.arenaW, AH = S.view === 'tilt' ? tiltDepth(S.arenaW) : AW * CH / CW, TWID = 0.26;
+const AW = S.arenaW, AH = S.view === 'tilt' ? tiltDepth(S.arenaW) : REAL_ON ? AW / PA : AW * CH / CW, TWID = 0.26;
 function setSize(k) { S.size = k; S.arenaW = SIZES[k].w; S.track = SIZES[k].track; S.laps = SIZES[k].laps || 5; save(); location.reload(); }
 const scene = new THREE.Scene(), bgTop = new THREE.Color(0x000000), skyTilt = new THREE.Color(0x9fd8ff), fogTilt = new THREE.Fog(0x9fd8ff, 3, 9); scene.background = bgTop;
 
@@ -193,6 +202,11 @@ let QUAD = null;
 if (TILT) { S.tiltMode = 'd'; camTilt.aspect = PA; camTilt.updateProjectionMatrix(); fitTilt('d');
   const hit = (nx, ny) => { const v = new THREE.Vector3(nx, ny, 0.5).unproject(camTilt).sub(camTilt.position).normalize(), t = -camTilt.position.y / v.y; return [camTilt.position.x + v.x*t, camTilt.position.z + v.z*t]; };
   QUAD = { FL: hit(-1, 1), FR: hit(1, 1), NL: hit(-1, -1), NR: hit(1, -1) }; }
+// Real car: the picture is made bigger than the projection so that ALL of the projection is used, true to scale
+// (keystone from the tape in real.html). The part the projector really shows is a quad inside it: the track goes there.
+if (REAL_ON && !TILT) { let kn; try { kn = JSON.parse(localStorage.getItem('robo-keystone')); } catch (e) {}
+  if (Array.isArray(kn) && kn.length === 4) { const Hk = fitH([[0, 0], [1, 0], [1, 1], [0, 1]].map((p, i) => [p, kn[i]])), Hi = Hk && invH(Hk);
+    if (Hi) { const w = (x, y) => { const [u, v] = applyH(Hi, x, y); return [u * AW, v * AH]; }; QUAD = { FL: w(0, 0), FR: w(1, 0), NL: w(0, 1), NR: w(1, 1) }; } } }
 // show the planned area (QUAD) on the real window: fills it exactly in fullscreen, small black bars otherwise
 function fitQuad() {
   camTilt.aspect = CW / CH; camTilt.updateProjectionMatrix();
@@ -243,7 +257,7 @@ const R = seeded(77 + Math.round(T.per * 100));
 // ---------------- scenery plan (positions first: some of it is painted on the ground) ----------------
 const placed = [];
 const trackD = (x, z) => T.locate({ x, y: z }, null).d;
-const BLACK = TILT && S.bg === 'black', BAND = 0.26;   // black background: only a band of scenery around the track
+const BLACK = (TILT || REAL_ON) && S.bg === 'black', BAND = 0.26;   // black background: only a band of scenery around the track
 const nearTrack = (x, z) => !BLACK || trackD(x, z) < T.tw/2 + BAND;
 const clear = (x, z, r, edge = 0) => x > edge && z > edge && x < AW - edge && z < AH - edge && inView(x, z) && trackD(x, z) > T.tw/2 + 0.035 + r && nearTrack(x, z) && placed.every(p => Math.hypot(p.x - x, p.z - z) > p.r + r);
 function tryPlace(r, edge = r, tries = 400) { for (let k = 0; k < tries; k++) { const x = R()*AW, z = R()*AH; if (clear(x, z, r, edge)) { placed.push({ x, z, r }); return { x, z }; } } return null; }
@@ -482,6 +496,26 @@ function makeCar(skin) {
   for (const [x, y, z, r] of [[0.02, 0.04, -0.014, 0.014], [-0.022, 0.042, 0.012, 0.013], [0.04, 0.034, 0.016, 0.009], [-0.04, 0.036, -0.018, 0.01], [0, 0.048, 0, 0.011]]) goo.add(mesh(new THREE.SphereGeometry(r, 10, 8), gm, x, y, z, false));
   goo.visible = false; g.add(goo); scene.add(g); return { g, body, glow, goo, siren };
 }
+// The real car is not drawn (it is there on the floor): only a ring in its colour around it and an arrow where it points.
+// Nothing bright goes right under it, so the camera never mistakes our own drawing for its LEDs.
+function realMarker(car) {
+  car.m.g.children.forEach(c => c.visible = false);
+  const mat = new THREE.MeshBasicMaterial({ color: car.col, transparent: true, opacity: 0.7, depthWrite: false }), rg = new THREE.RingGeometry(0.095, 0.108, 48); rg.rotateX(-Math.PI / 2);
+  const ring = new THREE.Mesh(rg, mat); ring.position.y = 0.004;
+  const sh = new THREE.Shape(); sh.moveTo(0.15, 0); sh.lineTo(0.115, 0.025); sh.lineTo(0.115, -0.025); sh.closePath();
+  const ag = new THREE.ShapeGeometry(sh); ag.rotateX(-Math.PI / 2); const arrow = new THREE.Mesh(ag, mat); arrow.position.y = 0.004;
+  car.m.g.add(ring, arrow); car.m.real = { ring, arrow };
+}
+// camera metres (fractions of the picture) → this view's world, for the straight-down camera
+function realXY() { const [u, v] = RC.uv(); return [AW / 2 + (u - 0.5) * AH * CW / CH, v * AH]; }
+if (RC) {
+  RC.exclude = (mx, my) => { const c = cars.find(k => k.real); if (!c) return false;
+    const x = AW / 2 + (mx / RC.S.arenaW - 0.5) * AH * CW / CH, y = my / RC.depth * AH, d = Math.hypot(x - c.x, y - c.y); return d > 0.088 && d < 0.18; };
+  RC.startCamera(); RC.onchange = () => { if (lobbyOpen) realStatus(); };
+  addEventListener('visibilitychange', () => { if (document.hidden) RC.stop(); });
+  addEventListener('pagehide', () => RC.stop());
+}
+
 // Drive assist, from 0 (none) to 4 (the car steers itself and the stick is only the accelerator)
 const HELP = ['Sem ajuda', 'Leve', 'Curvas', 'Quase sozinho', 'Volante automático'];
 function autoPilot(car) {   // where the track goes: steering towards a point ahead, and a safe speed for the bends to come
@@ -493,20 +527,26 @@ function autoPilot(car) {   // where the track goes: steering towards a point ah
 let now = 0, phase = 'count', tCount = 0, excite = 0, winner = null, cars = [];
 const kidCar = () => cars.find(c => !c.ai && c.p('Mode') === 'kid') || cars.find(c => !c.ai);
 class Car {
-  constructor(i, ai, skin) { this.i = i; this.ai = ai || null; this.skin = skin || SKINS[i % SKINS.length]; this.col = this.skin.col; this.m = makeCar(this.skin); this.r = CAR_R; this.mass = 0.35; this.reset(); }
+  constructor(i, ai, skin, real) { this.i = i; this.ai = ai || null; this.skin = skin || SKINS[i % SKINS.length]; this.col = this.skin.col; this.m = makeCar(this.skin); this.r = CAR_R; this.mass = 0.35;
+    this.real = !!real && !!RC; if (this.real) realMarker(this); this.reset(); }
   p(k) { return S['p' + (this.i + 1) + k]; }
-  get name() { return this.ai ? this.ai.label : 'P' + (this.i + 1); }
+  get name() { return (this.ai ? this.ai.label : 'P' + (this.i + 1)) + (this.real ? ' 🚗' : ''); }
   reset() { const g = gridPos(this.i); Object.assign(this, { x: g.x, y: g.y, th: g.th, vx: 0, vy: 0, w: 0, cmd: { v: 0, w: 0 }, boostUntil: 0, padUntil: 0, gooUntil: 0, slowUntil: 0, gooCd: 0,
     hint: null, lastS: null, dist: 0, laps: 0, lapStart: 0, last: null, best: null, done: false, roll: 0, energy: 1, turbo: false });
+    if (this.real && RC.seen) { [this.x, this.y] = realXY(); this.th = RC.th ?? T.locate(this, null).a; }
     const L = T.locate(this, null); this.hint = L.i; this.lastS = L.s; this.dist = wrapD(L.s - S0, T.per); }
   get speedLimit() { const cap = this.ai ? this.ai.cap() : this.p('Cap'); let m = 1; if (now < this.boostUntil) m = 1.5; if (this.turbo) m = Math.max(m, 1.65); if (now < this.padUntil) m = Math.max(m, 1.7);
-    if (now < this.gooUntil) m *= !this.ai && this.p('Mode') === 'kid' ? 0.7 : 0.45; return VMAX * cap / 100 * m; }
+    if (now < this.gooUntil) m *= !this.ai && this.p('Mode') === 'kid' ? 0.7 : 0.45; if (this.real && this.off) m *= 0.6; return VMAX * cap / 100 * m; }
   shoot() { if (phase !== 'race' || now < this.gooCd) return; this.gooCd = now + 1.2; const c = Math.cos(this.th), s = Math.sin(this.th), sp = Math.max(0, this.vx*c + this.vy*s) + 0.9;
     goos.push(new Goo(this, this.x + c*0.08, this.y + s*0.08, c*sp, s*sp)); beep(520, 0.12, 0.12, 'sine', 180); }
   slime(d) { if (now >= this.gooUntil) beep(160, 0.25, 0.15, 'sawtooth', 70); this.gooUntil = Math.max(this.gooUntil, now + d); }
   command(inp) {
     if (phase !== 'race' || this.done) { this.cmd = { v: 0, w: 0 }; this.turbo = false; return; }
-    if (this.ai) { this.cmd = this.ai.drive(this); return; }
+    if (this.ai) {
+      if (this.real && S.players < 2) {   // a hand from the arrow keys: the direction to go on the picture, for as long as they are held
+        const hx = (keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0), hy = (keys.has('arrowdown') ? 1 : 0) - (keys.has('arrowup') ? 1 : 0);
+        if (hx || hy) { const err = angDiff(Math.atan2(hy, hx), this.th), vmax = this.speedLimit; this.cmd = { v: vmax * Math.max(0, Math.cos(err)) ** 3, w: clamp(err * 7, -WMAX, WMAX) }; return; } }
+      this.cmd = this.ai.drive(this); return; }
     if (inp.fire) this.shoot();
     // turbo: ONE per lap. A press fires the whole ~3 s burst; the tank only refills when crossing the finish line.
     if (inp.boost && !this.turbo && this.energy >= 0.999) { this.turbo = true; if (engines[this.i]) engines[this.i].spool(); }
@@ -533,16 +573,29 @@ class Car {
   }
   step(dt) {
     let { v, w } = this.cmd; if (now < this.slowUntil) { v *= 0.4; w += 6 * Math.sin(now * 9); }
+    if (this.real) this.realStep(v, w); else {
     const tx = v * Math.cos(this.th), ty = v * Math.sin(this.th), dvx = tx - this.vx, dvy = ty - this.vy, dv = Math.hypot(dvx, dvy), lim = ACC * dt, k = dv > lim ? lim / dv : 1;
     this.vx += dvx * k; this.vy += dvy * k; this.w += clamp(w - this.w, -WMAX*8*dt, WMAX*8*dt);
     this.x += this.vx * dt; this.y += this.vy * dt; this.th += this.w * dt;
-    this.x = clamp(this.x, this.r, AW - this.r); this.y = clamp(this.y, this.r, AH - this.r);
-    const L = T.locate(this, this.hint); this.hint = L.i; this.dist += wrapD(L.s - this.lastS, T.per); this.lastS = L.s; this.off = L.d > T.tw/2;
+    this.x = clamp(this.x, this.r, AW - this.r); this.y = clamp(this.y, this.r, AH - this.r); }
+    const L = T.locate(this, this.hint); this.hint = L.i; const dS = wrapD(L.s - this.lastS, T.per); this.lastS = L.s; this.off = L.d > T.tw/2;
+    if (!this.real || Math.abs(dS) < 0.3) this.dist += dS;   // a camera jump must not count as distance
     const laps = Math.floor(this.dist / T.per + 1e-9);
     if (phase === 'race' && laps > this.laps) { this.laps = laps; if (laps >= 1 && !this.turbo) { this.energy = 1; if (!this.ai) toast(`<span style="color:${'#' + this.col.toString(16).padStart(6, '0')}">${this.name}</span> · TURBO pronto!`); } if (laps >= 1) { this.last = now - this.lapStart; if (!this.best || this.last < this.best) this.best = this.last; beep(880, 0.1, 0.1, 'sine'); } this.lapStart = now;
       if (laps > S.laps && !winner) finish(this); }
   }
+  // The real car: where the camera sees it (+ a little ahead for the camera's delay), pointing where it moves; the
+  // game's command (player or AI, turbo, goo, assist) goes to its wheels.
+  realStep(v, w) {
+    const seen = RC.seen;
+    if (seen) { const [x, y] = realXY(); this.x = x + RC.P.vx * 0.08; this.y = y + RC.P.vy * 0.08; this.vx = RC.P.vx; this.vy = RC.P.vy; if (RC.th != null) this.th = RC.th; this.w = w; }
+    this.lost = !seen;
+    if (seen && (v || w)) RC.drive(v, w); else RC.stop();
+  }
   sync(dt) {
+    if (this.real) { const g = this.m.g; g.position.set(this.x, 0, this.y); g.rotation.y = -this.th; const mk = this.m.real;
+      mk.ring.material.color.setHex(now < this.gooUntil ? 0x7dff3a : this.col); mk.ring.material.opacity = this.lost ? 0.25 + 0.25 * Math.sin(now * 8) : 0.7;
+      mk.ring.scale.setScalar(this.turbo || now < this.padUntil ? 1.12 + 0.05 * Math.sin(now * 20) : 1); return; }
     const sp = Math.hypot(this.vx, this.vy), g = this.m.g; g.position.set(this.x, 0, this.y); g.rotation.y = -this.th;
     this.roll += (clamp(this.w * sp * 0.25, -0.18, 0.18) - this.roll) * Math.min(1, dt * 10); this.m.body.rotation.x = this.roll;
     const boosting = now < this.padUntil || now < this.boostUntil || this.turbo;
@@ -556,6 +609,8 @@ class Car {
   }
 }
 function collide(a, b) { const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), md = a.r + b.r; if (d >= md || d === 0) return; const nx = dx/d, ny = dy/d, pen = (md - d) / 2;
+  if (a.real || b.real) { const o = a.real ? b : a, r = a.real ? a : b, sg = a.real ? 1 : -1;   // only the virtual one moves
+    o.x += sg*nx*2*pen; o.y += sg*ny*2*pen; const rv = ((o.vx - r.vx)*nx + (o.vy - r.vy)*ny) * sg; if (rv < 0) { o.vx -= 1.3*rv*nx*sg; o.vy -= 1.3*rv*ny*sg; } return; }
   a.x -= nx*pen; a.y -= ny*pen; b.x += nx*pen; b.y += ny*pen; const rv = (b.vx - a.vx)*nx + (b.vy - a.vy)*ny; if (rv > 0) return; const j = -1.3 * rv / 2; a.vx -= j*nx; a.vy -= j*ny; b.vx += j*nx; b.vy += j*ny; }
 
 // AI: PRO plans speed from the bends ahead and overtakes; BUDDY stays just ahead of the child and waits for them.
@@ -656,14 +711,15 @@ const calib = new THREE.Group(); calib.visible = false; scene.add(calib);
 // ---------------- race control ----------------
 const MAX = 6, carCount = () => S.players + S.nBuddy + S.nPro;
 function makeCars(lobby) { for (const c of cars) scene.remove(c.m.g); cars = []; const used = new Set();
-  for (let i = 0; i < S.players; i++) { const sk = skinById(S['p' + (i + 1) + 'Skin']); used.add(sk.id); cars.push(new Car(i, null, sk)); }
+  for (let i = 0; i < S.players; i++) { const sk = skinById(S['p' + (i + 1) + 'Skin']); used.add(sk.id); cars.push(new Car(i, null, sk, REAL_ON && S.realP === i + 1)); }
   const free = () => { const sk = SKINS.find(k => !used.has(k.id) && k.id !== 'police' && k.id !== 'gold') || SKINS[cars.length % SKINS.length]; used.add(sk.id); return sk; };
-  for (const [k, kind] of [['nBuddy', 'buddy'], ['nPro', 'pro']]) for (let j = 0; j < S[k] && cars.length < MAX; j++) cars.push(new Car(cars.length, new Driver(kind), free()));
+  let aiReal = REAL_ON && S.realP === 'ai';
+  for (const [k, kind] of [['nBuddy', 'buddy'], ['nPro', 'pro']]) for (let j = 0; j < S[k] && cars.length < MAX; j++) { cars.push(new Car(cars.length, new Driver(kind), free(), aiReal)); aiReal = false; }
   restart(); if (lobby) phase = 'lobby'; }
 function restart() { phase = 'count'; tCount = 0; winner = null; excite = 0; for (const c of cars) { c.reset(); if (c.ai) Object.assign(c.ai, { vEst: 0, lane: 0, laneT: 0 }); } for (const g of goos) g.kill(); goos.length = 0; $('banner').innerHTML = ''; lastBeep = -1; }
 function finish(c) { winner = c; phase = 'done'; tCount = 0; excite = 6; $('banner').innerHTML = `<span style="color:#${c.col.toString(16).padStart(6, '0')}">${c.name}</span> WINS!<div>new race in a moment · <kbd>R</kbd> restart</div>`;
   [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.25, 0.18, 'triangle'), i * 140)); }
-let lastBeep = -1, paused = false, calibOn = false;
+let lastBeep = -1, paused = false, calibOn = false, camPrevOn = false;
 function tick(dt) {
   now += dt; excite = Math.max(0, excite - dt);
   if (phase === 'count') { tCount += dt; const n = Math.floor(tCount / 0.7);
@@ -679,7 +735,8 @@ function tick(dt) {
 let acc = 0, last = performance.now(), hudT = 0, gT = 0;
 function hud() { const rank = [...cars].sort((a, b) => b.dist - a.dist);
   const bar = cars.filter(c => !c.ai).map(p1 => `<div style="margin:2px 0 4px"><span class="dot" style="background:#${p1.col.toString(16).padStart(6, '0')}"></span>${(p1.p('Help') ?? 0) ? 'AJUDA ' + p1.p('Help') + ' · ' : ''}TURBO <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:#444;vertical-align:middle;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(p1.energy*100)}%;background:${p1.turbo ? '#ff6a00' : '#ffb000'}"></i></span> <small>${p1.turbo ? 'A FUNDO!' : p1.energy >= 0.999 ? 'pronto' : 'próxima volta'}</small></div>`).join('');
-  $('hud').innerHTML = bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
+  const rl = cars.find(c => c.real), warn = rl && RC.acq ? '<div style="color:#ffd21a">🚗 a procurar o carro real…</div>' : rl && rl.lost ? '<div style="color:#ff6a6a">🚗 não vejo o carro real</div>' : rl && !RC.connected ? '<div style="color:#ffb000">🚗 carro real sem Bluetooth</div>' : '';
+  $('hud').innerHTML = warn + bar + rank.map((c, i) => `<div>${i + 1}. <span class="dot" style="background:#${c.col.toString(16).padStart(6, '0')}"></span>${c.name} · lap ${clamp(c.laps + 1, 1, S.laps)}/${S.laps} <small>${c.best ? 'best ' + c.best.toFixed(1) + 's' : ''}</small></div>`).join('') + `<small>${T.name} · ${T.per.toFixed(1)} m</small>`; }
 function draw(dt) {
   for (const c of cars) c.sync(dt); for (const f of anim) f(now, dt);
   for (let i = 0; i < 2; i++) { const h = cars.find(c => c.i === i && !c.ai); engines[i].update(h, !!h && phase === 'race' && !paused); } SMOKE.update(dt); GLOW.update(dt);
@@ -687,6 +744,8 @@ function draw(dt) {
   hudT += dt; if (hudT > 0.15) { hud(); hudT = 0; }
   const tilt = S.view === 'tilt'; outer.visible = outerWood.visible = tilt && !BLACK; scene.fog = tilt && !BLACK ? fogTilt : null; scene.background = tilt && !BLACK ? skyTilt : bgTop;
   renderer.render(scene, tilt ? camTilt : camTop);
+  if (RC && camPrevOn) RC.drawPreview($('camPrev'));
+  if (REC) recFrame();
 }
 function frame(t) { pollLobby(); const dt = Math.min(0.1, (t - last) / 1000); last = t; if (!paused && !calibOn) { acc += dt; while (acc >= DT) { acc -= DT; tick(DT); } } draw(dt); requestAnimationFrame(frame); }
 
@@ -698,6 +757,7 @@ function setHelp(i, n) { n = clamp(n, 0, 4); S['p' + i + 'Help'] = n; save(); to
 function hotkey(e) { if (['INPUT', 'SELECT'].includes(e.target.tagName)) return; const k = e.key.toLowerCase(); if (lobbyOpen && k !== 'f' && !['+', '=', '-', '_', 'm', 'p'].includes(k)) { if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); return; }
   if (k === 'p' || k === 'm') toggleMenu(); else if (k === 'v') { S.view = S.view === 'top' ? 'tilt' : 'top'; save(); location.reload(); }
   else if (k === 'c') { calibOn = !calibOn; calib.visible = calibOn; document.querySelectorAll('.corner').forEach(c => c.style.display = calibOn ? 'block' : 'none'); }
+  else if (k === 'j') { camPrevOn = !camPrevOn; $('camPrev').style.display = camPrevOn ? 'block' : 'none'; }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   else if (k === 'r') restart(); else if (k === '+' || k === '=' || k === '-' || k === '_') setHelp(1, (S.p1Help ?? 0) + (k === '+' || k === '=' ? 1 : -1)); else if (k === 'k') paused = !paused; else if (k === 'l' || k === 'escape') showLobby(); else if (k === 't') { const n = Object.keys(LAYOUTS); S.track = n[(n.indexOf(S.track) + 1) % n.length]; save(); location.reload(); }
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); }
@@ -706,6 +766,54 @@ $('menuBtn').onclick = toggleMenu;
 const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
 $('fsBtn').onclick = fullscreen;
 $('muteBtn').onclick = () => setMute(!S.mute); setMute(!!S.mute);
+// ---------------- recording a race: one video (game screen | camera with what the tracker saw | numbers) + a data log ----------------
+let REC = null;
+$('recBtn').onclick = () => REC ? recStop() : recStart();
+function recStart() {
+  const c = document.createElement('canvas'); c.width = 1600; c.height = 540;
+  const st = c.captureStream(30), mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+  const mr = new MediaRecorder(st, { mimeType: mime, videoBitsPerSecond: 6e6 }), chunks = [];
+  mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  REC = { c, g: c.getContext('2d'), mr, chunks, log: [], t0: performance.now(), lastLog: 0, stamp: new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') };
+  mr.start(1000); $('recBtn').classList.add('on'); $('recBtn').textContent = '⏹ Parar'; toast('A gravar · ⏹ para parar e guardar');
+}
+function recStop() {
+  const R = REC; REC = null; $('recBtn').classList.remove('on'); $('recBtn').textContent = '⏺ Gravar';
+  R.mr.onstop = () => {
+    const dl = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); };
+    dl(new Blob(R.chunks, { type: 'video/webm' }), `robogp-${R.stamp}.webm`);
+    setTimeout(() => dl(new Blob([JSON.stringify({ settings: S, real: RC ? RC.S : null, track: { name: T.name, tw: T.tw, per: T.per, AW, AH }, log: R.log })], { type: 'application/json' }), `robogp-${R.stamp}.json`), 600);
+    toast('Gravação guardada nas Transferências');
+  };
+  R.mr.stop();
+}
+function recFrame() {
+  const R = REC, g = R.g, t = (performance.now() - R.t0) / 1000;
+  g.fillStyle = '#000'; g.fillRect(0, 0, 1600, 540); g.drawImage(cv, 0, 0, 960, 540);
+  const rc = cars.find(c => c.real);
+  if (RC && RC.stream) {
+    g.drawImage(RC.vid, 960, 0, 640, 360);
+    for (const b of RC.blobs) { g.strokeStyle = b.bad ? '#888' : '#ff3030'; g.lineWidth = 2; g.strokeRect(960 + b.box[0] * 640 - 2, b.box[1] * 360 - 2, (b.box[2] - b.box[0]) * 640 + 4, (b.box[3] - b.box[1]) * 360 + 4); }
+    if (RC.Hi && RC.P.ok) { const cam = (mx, my) => { const [u, v] = applyHc(RC.Hi, mx / RC.S.arenaW, my / RC.depth); return [960 + u * 640, v * 360]; };
+      const [px, py] = cam(RC.P.x, RC.P.y); g.strokeStyle = '#00e0ff'; g.lineWidth = 3; g.beginPath(); g.arc(px, py, 14, 0, 7); g.stroke();
+      if (RC.th != null) { const [qx, qy] = cam(RC.P.x + Math.cos(RC.th) * 0.15, RC.P.y + Math.sin(RC.th) * 0.15); g.beginPath(); g.moveTo(px, py); g.lineTo(qx, qy); g.stroke(); }
+      if (RC.axis) { const [qx, qy] = cam(RC.P.x + Math.cos(RC.axis.ang) * 0.1, RC.P.y + Math.sin(RC.axis.ang) * 0.1); g.strokeStyle = '#3f3'; g.beginPath(); g.moveTo(px, py); g.lineTo(qx, qy); g.stroke(); } }
+  }
+  const f = v => v == null ? '–' : (+v).toFixed(2);
+  const L = rc ? T.locate(rc, rc.hint) : null;
+  const lines = [`t ${t.toFixed(1)} s · ${phase}${paused ? ' (pausa)' : ''} · câmara ${RC ? Math.round(RC.fps) + ' fps' : '–'}`,
+    rc ? `real: ${rc.name} · ${RC.seen ? 'visto' : 'NÃO VISTO'} · BT ${RC.connected ? 'ok' : 'não'}` : 'sem carro real',
+    rc ? `pos ${f(rc.x)}, ${f(rc.y)} m · rumo ${rc.th != null ? (rc.th * 57.3).toFixed(0) : '–'}° (câmara ${RC.th != null ? (RC.th * 57.3).toFixed(0) : '–'}°, LEDs ${RC.axis ? (RC.axis.ang * 57.3).toFixed(0) + '°' : '–'})` : '',
+    rc ? `ordem v ${f(rc.cmd.v)} m/s · w ${f(rc.cmd.w)} rad/s · rodas ${RC.lastLR ? RC.lastLR.join(' / ') : '–'} %` : '',
+    rc ? `pista: ${(L.d * 100).toFixed(0)} cm do centro${rc.off ? ' (FORA)' : ''} · volta ${rc.laps + 1} · limite ${f(rc.speedLimit)} m/s` : '',
+    rc ? `pontos de luz ${RC.blobs.length} (${RC.blobs.filter(b => b.bad).length} ignorados)` : ''];
+  g.fillStyle = '#fff'; g.font = '16px ui-monospace, monospace'; lines.forEach((l, i) => g.fillText(l, 970, 386 + i * 24));
+  if (performance.now() - R.lastLog > 50) { R.lastLog = performance.now();
+    R.log.push({ t: +t.toFixed(3), phase, cars: cars.map(c => ({ n: c.name, x: +c.x.toFixed(3), y: +c.y.toFixed(3), th: +c.th.toFixed(3), v: +c.cmd.v.toFixed(3), w: +c.cmd.w.toFixed(3), laps: c.laps, off: !!c.off })),
+      real: rc ? { seen: RC.seen, P: { x: +RC.P.x.toFixed(3), y: +RC.P.y.toFixed(3), vx: +RC.P.vx.toFixed(3), vy: +RC.P.vy.toFixed(3) }, th: RC.th, axis: RC.axis ? +RC.axis.ang.toFixed(3) : null, lr: RC.lastLR, d: +L.d.toFixed(3), blobs: RC.blobs.map(b => [+b.mx.toFixed(3), +b.my.toFixed(3), b.a, b.bad ? 1 : 0]) } : null,
+      input: [0, 1].map(i => { const q = readInput(i); return [+q.lx.toFixed(2), +q.ly.toFixed(2)]; }) }); }
+}
+const applyHc = (h, x, y) => { const w = h[6] * x + h[7] * y + h[8]; return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]; };
 
 function buildMenu() {
   const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}">${S[k]}</span></div>`;
@@ -743,7 +851,7 @@ const carSvg = sk => `<svg viewBox="0 0 120 60" width="100%" height="54"><rect x
   <ellipse cx="50" cy="30" rx="15" ry="9" fill="#0b1220"/><ellipse cx="46" cy="27" rx="7" ry="3" fill="#fff5"/></svg>`;
 let lobbyOpen = false, lobbyPad = { x: 0, a: false };
 function showLobby() { lobbyOpen = true; makeCars(true); $('lobby').style.display = 'block'; $('banner').innerHTML = ''; buildLobby(); }
-function startRace() { lobbyOpen = false; $('lobby').style.display = 'none'; save(); makeCars(); unlock(); }
+function startRace() { lobbyOpen = false; $('lobby').style.display = 'none'; save(); makeCars(); unlock(); if (RC && RC.connected) RC.acquire('partida'); }
 function buildLobby() {
   const card = i => { const p = 'p' + i, other = S[(i === 1 ? 'p2' : 'p1') + 'Skin'];
     return `<div class="card"><h2>Jogador ${i} <small>${i === 1 ? '· comando' : '· teclado'}</small></h2>
@@ -755,9 +863,11 @@ function buildLobby() {
     <div class="players">${card(1)}${S.players > 1 ? card(2) : ''}</div>
     <div class="row2"><b>Jogadores</b><button data-pl="1" class="${S.players === 1 ? 'on' : ''}">1</button><button data-pl="2" class="${S.players === 2 ? 'on' : ''}">2</button>
       <b style="margin-left:18px">Adversários</b>${[0, 1, 2, 3].map(n => `<button data-ai="${n}" class="${S.nPro + S.nBuddy === n ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <div class="row2"><b>Carro real 🚗</b>${[[0, 'Nenhum'], [1, 'Jogador 1'], [2, 'Jogador 2'], ['ai', 'Adversário (AI)']].map(([v, t]) => `<button data-real="${v}" class="${(S.realP || 0) === v ? 'on' : ''}" ${REALS.H || !v ? '' : 'disabled'}>${t}</button>`).join('')}</div>
+    <div class="hint" id="realStat"></div>
     <div class="row2"><b>Dificuldade</b>${[['Fáceis', 45], ['Médios', 70], ['Difíceis', 95]].map(([t, v]) => `<button data-skill="${v}" class="${Math.abs(S.aiSkill - v) < 13 ? 'on' : ''}">${t}</button>`).join('')}</div>
     <button class="go" id="goBtn">▶ COMEÇAR</button><div class="hint">Comando: mexe o stick para escolher a cor · <kbd>A</kbd> para começar</div>
-    <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · 🔊 botão do som · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor<br>
+    <div class="shortcuts"><b>Atalhos</b> · + / − ajuda do jogador 1 (também a meio da corrida) · K pausa · 🔊 botão do som · R recomeçar · L voltar a este ecrã · F ecrã inteiro · T trocar pista · M menu completo (por cima deste ecrã) · C calibrar projetor · J câmara do carro real<br>
       Jogador 1 (comando): stick conduz · A / R2 gosma · B / L2 turbo (1 por volta) &nbsp;·&nbsp; Jogador 2 (teclado): setas conduzem · Espaço turbo (1 por volta) · Enter gosma</div></div>`;
   const el = $('lobby');
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { const [i, id] = b.dataset.skin.split(':'); S['p' + i + 'Skin'] = id;
@@ -767,8 +877,33 @@ function buildLobby() {
   el.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { const [i, m] = b.dataset.mode.split(':'); S['p' + i + 'Mode'] = m; save(); buildLobby(); });
   el.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => { S.players = +b.dataset.pl; save(); makeCars(true); buildLobby(); });
   el.querySelectorAll('[data-ai]').forEach(b => b.onclick = () => { S.nPro = +b.dataset.ai; S.nBuddy = 0; save(); makeCars(true); buildLobby(); });
-  $('goBtn').onclick = startRace;
+  el.querySelectorAll('[data-real]').forEach(b => b.onclick = () => setReal(b.dataset.real === 'ai' ? 'ai' : +b.dataset.real));
+  $('goBtn').onclick = startRace; realStatus();
 }
+function setReal(v) {
+  const was = REAL_ON, on = !!v;
+  if (on && !was) S.preReal = { view: S.view, arenaW: S.arenaW, track: S.track, laps: S.laps, size: S.size };
+  if (!on && S.preReal) { Object.assign(S, S.preReal); delete S.preReal; }
+  S.realP = v; if (v === 'ai' && S.nPro + S.nBuddy === 0) S.nPro = 1; if (typeof v === 'number' && v > S.players) S.players = v;
+  if (on) S.laps = 3; save();
+  if (on !== was) { location.reload(); return; }   // the picture changes (top-down at true scale): start again
+  makeCars(true); buildLobby();
+}
+function realStatus() {
+  const el = $('realStat'); if (!el) return;
+  if (!REALS.H) { el.innerHTML = 'Para usar o carro verdadeiro, primeiro calibra a câmara em <a href="real.html" style="color:#8fbfff">Carro real — teste</a>.'; return; }
+  if (!RC) { el.innerHTML = ''; return; }
+  const who = S.realP === 'ai' ? 'a AI conduz o carro real' : `o Jogador ${S.realP} conduz o carro real`;
+  const html = `${who} · 📷 ${RC.stream ? 'câmara ligada' : RC.camError ? '<span style="color:#ff6a6a">' + RC.camError + '</span>' : 'a ligar…'} · ` +
+    `${RC.seen ? '<span style="color:#5be37d">vejo o carro</span>' : '<span style="color:#ffb000">não vejo o carro</span>'} · ` +
+    (RC.acq ? '<span style="color:#ffd21a">a procurar o carro (LEDs a piscar)…</span> · ' : RC.acqInfo ? (RC.acqInfo.ok ? '<span style="color:#5be37d">carro encontrado</span> · ' : '<span style="color:#ff6a6a">não encontrei o carro a piscar</span> · ') : '') +
+    (RC.connected ? '<span style="color:#5be37d">Bluetooth ligado</span>' : '<button id="btReal" style="background:#1a73c9;color:#fff;border:0;border-radius:8px;padding:6px 12px;font:600 14px system-ui;cursor:pointer">🔗 Ligar o carro</button>') +
+    (REALS.carA ? '' : '<br><span style="color:#ffb000">O carro ainda não foi medido («Medir o carro» em Carro real — teste): as curvas podem sair tortas.</span>') +
+    '<br>Põe o carro na pista, perto da partida. <kbd>J</kbd> mostra o que a câmara vê.';
+  if (el._h === html) return; el.innerHTML = el._h = html;      // only when something changed, so a click on the button is never lost
+  const b = $('btReal'); if (b) b.onclick = async () => { try { await RC.connect(); } catch (e) { if (e.name !== 'NotFoundError') toast(e.message); } realStatus(); };
+}
+if (RC) setInterval(() => { if (lobbyOpen) realStatus(); }, 700);
 function pollLobby() {   // the child can pick with the pad: stick left/right changes colour, A starts
   if (!lobbyOpen) return; const gp = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[0];
   const kx = keys.has('arrowright') ? 1 : keys.has('arrowleft') ? -1 : 0, x = gp ? (Math.abs(gp.axes[0]) > 0.6 ? Math.sign(gp.axes[0]) : 0) : 0, a = gp && gp.buttons[0] && gp.buttons[0].pressed;
@@ -780,8 +915,9 @@ function pollLobby() {   // the child can pick with the pad: stick left/right ch
   if (keys.has('enter') && !lobbyPad.enter) startRace();
   lobbyPad = { x, a, kx, enter: keys.has('enter') };
 }
+if (REAL_ON) { const st = document.createElement('style'); st.textContent = '#toInicio,#menuBtn,#fsBtn,#muteBtn,#recBtn{opacity:.25}#toInicio:hover,#menuBtn:hover,#fsBtn:hover,#muteBtn:hover,#recBtn:hover{opacity:1}#recBtn.on{opacity:.45;background:#3a1010}'; document.head.appendChild(st); }
 showLobby(); requestAnimationFrame(frame);
-window.__race = { S, T, fitTilt, onResize, shot(mode) { fitTilt(mode); draw(0.016); return cv; }, get cars() { return cars; }, get phase() { return phase; }, pads, stars, oils, layouts: () => Object.keys(LAYOUTS).map(n => { const t = buildTrack(n); return [n, +t.per.toFixed(2), +t.minSep.toFixed(3)]; }), sim(sec) { for (let i = 0; i < sec / DT; i++) tick(DT); draw(0.016); } };
+window.__race = { S, T, RC, recInfo: () => REC && { chunks: REC.chunks.length, log: REC.log.length, last: REC.log.at(-1) }, fitTilt, onResize, shot(mode) { fitTilt(mode); draw(0.016); return cv; }, get cars() { return cars; }, get phase() { return phase; }, pads, stars, oils, layouts: () => Object.keys(LAYOUTS).map(n => { const t = buildTrack(n); return [n, +t.per.toFixed(2), +t.minSep.toFixed(3)]; }), sim(sec) { for (let i = 0; i < sec / DT; i++) tick(DT); draw(0.016); } };
 </script>
 </body>
 </html>

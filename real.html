@@ -39,6 +39,18 @@
   <h3>1 · Projeção</h3>
   <div class="btns"><button id="fs">Ecrã inteiro</button><button id="cornersBtn">Acertar cantos (C)</button><button id="pat">Grelha (G)</button><button id="resetK">Repor cantos</button></div>
   <div class="row"><label>Largura projetada no chão (m)</label><input type="number" id="arenaW" min="0.5" max="8" step="0.05"></div>
+  <details id="measure" style="margin:6px 0"><summary style="cursor:pointer;color:#e6eaf0">📏 Acertar com a fita métrica (automático)</summary>
+    <div class="muted" style="margin:4px 0">Carrega em «Marcar pontos»: a página vai para ecrã inteiro e aparecem no chão 4 cruzes numeradas. Mede em cm, do centro de uma cruz ao centro da outra (<kbd>H</kbd> traz o painel de volta para escreveres; não faz mal se sair do ecrã inteiro).</div>
+    <div class="btns"><button id="mStart">Marcar pontos</button></div>
+    <div class="row"><label>Cruz 1 → 2 (em cima)</label><input type="number" id="m12" min="10" step="0.5"></div>
+    <div class="row"><label>Cruz 4 → 3 (em baixo)</label><input type="number" id="m43" min="10" step="0.5"></div>
+    <div class="row"><label>Cruz 1 → 4 (esquerda)</label><input type="number" id="m14" min="10" step="0.5"></div>
+    <div class="row"><label>Cruz 2 → 3 (direita)</label><input type="number" id="m23" min="10" step="0.5"></div>
+    <div class="row"><label>Cruz 1 → 3 (diagonal)</label><input type="number" id="m13" min="10" step="0.5"></div>
+    <div class="row"><label>Cruz 2 → 4 (diagonal)</label><input type="number" id="m24" min="10" step="0.5"></div>
+    <div class="btns"><button id="mCalc" class="primary">Calcular cantos</button></div>
+    <div id="mMsg" class="muted"></div>
+  </details>
   <div id="kMsg" class="muted">Com a grelha ligada, arrasta os cantos 1–4 (ou escolhe um com as teclas 1–4 e acerta com as setas, Shift = 10×) até as linhas da borda ficarem paralelas e os quadrados quadrados. Cada quadrado tem 10 cm.</div>
 
   <h3>2 · Câmara</h3>
@@ -50,13 +62,18 @@
   <div class="row"><label>Limiar</label><input type="range" id="thr" min="60" max="255"><span class="v" id="thrV"></span></div>
   <div class="row"><label>Tamanho mínimo (px)</label><input type="range" id="minA" min="1" max="40"><span class="v" id="minAV"></span></div>
   <div id="ctl"></div>
+  <div class="row"><label>Altura dos LEDs (cm)</label><input type="range" id="ledH" min="0" max="15" step="0.5"><span class="v" id="ledHV"></span></div>
+  <div id="poseMsg" class="muted"></div>
   <div id="trackMsg" class="muted"></div>
 
   <h3>3 · Carro (Bluetooth)</h3>
   <div class="row"><button id="bt" class="primary">Ligar o carro</button><span id="btState" class="muted">desligado</span></div>
   <div class="row"><label>Velocidade máxima</label><input type="range" id="maxSpd" min="20" max="100"><span class="v" id="maxSpdV"></span></div>
-  <div class="row"><label>LEDs do carro</label><select id="led"><option value="green">Verde</option><option value="red">Vermelho</option><option value="blue">Azul</option><option value="white">Branco</option><option value="off">Desligados</option></select></div>
-  <div id="drvMsg" class="muted">Comando: stick esquerdo conduz, A buzina, B pára. Teclado: setas ou WASD.</div>
+  <div class="row"><label>Condução</label><select id="drvMode"><option value="easy">Fácil: vai para onde aponto</option><option value="tank">Tanque: frente/trás + virar</option></select></div>
+  <div class="row"><label>LEDs do carro</label><select id="led"><option value="two">Verde à frente + vermelho atrás (mostra a direção)</option><option value="green">Verde</option><option value="red">Vermelho</option><option value="blue">Azul</option><option value="white">Branco</option><option value="off">Desligados</option></select></div>
+  <div class="btns" style="margin:6px 0"><button id="measCar">Medir o carro (anda ~70 cm)</button></div>
+  <div id="measMsg" class="muted">Para o jogo saber a velocidade e as curvas do carro. Põe-no no meio da imagem, com espaço à frente, e carrega no botão: anda devagar, depressa e faz uma curva.</div>
+  <div id="drvMsg" class="muted">Comando: stick esquerdo conduz, A buzina, B pára. Teclado: setas ou WASD. No modo Fácil, cima = o carro vai para cima na imagem, esquerda = para a esquerda, etc. (precisa da câmara a vê-lo; mede o carro primeiro).</div>
 
   <h3>4 · No chão</h3>
   <div class="btns"><button id="ringBtn">Anel à volta do carro</button><button id="trailBtn">Rasto</button></div>
@@ -64,12 +81,14 @@
   <p class="muted"><a href="race3d.html">Robo GP 3D</a> · <a href="cam.html">Teste da câmara</a> · <a href="https://192.168.68.200:8444/inicio">← Início</a></p>
 </aside>
 <video id="vid" playsinline muted style="display:none"></video>
-<script>
+<script type="module">
+import { Heading, easyCmd, wheelsFor, carVmax, ledCmd, ledAxis, cameraPose, unParallax } from './realcar.js';
 const $ = id => document.getElementById(id);
 const lsGet = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-const S = Object.assign({ arenaW: 2.0, maxSpd: 50, led: 'green', thr: 200, minA: 3, det: 'bright', ring: true, trail: true, camId: '', H: null, Hkey: '', panel: true }, lsGet('robo-real', {}));
+const S = Object.assign({ arenaW: 2.0, maxSpd: 50, led: 'two', carLedPhi: null, thr: 200, minA: 3, det: 'bright', ring: true, trail: true, camId: '', H: null, Hkey: '', panel: true }, lsGet('robo-real', {}));
 const save = () => lsSet('robo-real', S);
+if (!S.ledV) { S.led = 'two'; S.ledV = 2; save(); }   // two-colour LEDs became the default (2026-11-12)
 // keystone shared with Robo GP 3D: where each corner of the picture lands on the screen, as a fraction of the screen
 const K0 = [[0,0],[1,0],[1,1],[0,1]];
 let K = lsGet('robo-keystone', null) || K0.map(p => p.slice());
@@ -100,8 +119,9 @@ function resize() {
   floor.width = Math.round(CW * dpr); floor.height = Math.round(CH * dpr); floor.style.width = CW + 'px'; floor.style.height = CH + 'px';
   applyK(); buildMask();
 }
+let KH = null;   // picture fraction → screen fraction
 function applyK() {   // canvas px → screen px
-  const n = fitH(K0.map((p, i) => [p, K[i]]));      // in screen fractions (well conditioned), then scaled to pixels
+  const n = KH = fitH(K0.map((p, i) => [p, K[i]]));      // in screen fractions (well conditioned), then scaled to pixels
   Hk = [n[0], n[1] * CW / CH, n[2] * CW, n[3] * CH / CW, n[4], n[5] * CH, n[6] / CW, n[7] / CH, 1];
   floor.style.transform = 'matrix3d(' + [Hk[0], Hk[3], 0, Hk[6], Hk[1], Hk[4], 0, Hk[7], 0, 0, 1, 0, Hk[2], Hk[5], 0, 1].join(',') + ')';
   document.querySelectorAll('.corner').forEach(el => { const [x, y] = K[+el.dataset.i]; el.style.left = x * CW + 'px'; el.style.top = y * CH + 'px'; });
@@ -118,15 +138,30 @@ const kKey = () => K.map(p => p.map(v => v.toFixed(4)).join(',')).join(';');
 // ---------------- what is projected ----------------
 let pattern = false, calDot = null, calibrating = false;
 const pxm = () => CW / S.arenaW;             // canvas px per metre
-const depthM = () => S.arenaW * CH / CW;
+const depthM = () => S.arenaW / (screen.width && screen.height ? screen.width / screen.height : CW / CH);   // fullscreen proportions, same as the games
 function drawFloor() {
   fx.setTransform(dpr, 0, 0, dpr, 0, 0); fx.fillStyle = '#000'; fx.fillRect(0, 0, CW, CH);
   if (calibrating) { if (calDot) { fx.fillStyle = '#fff'; fx.beginPath(); fx.arc(calDot[0] * CW, calDot[1] * CH, Math.min(CW, CH) * 0.022, 0, 7); fx.fill(); } return; }
+  if (measureMode) { drawMarks(); return; }
   if (pattern) drawPattern(); else drawArena();
   drawCar();
 }
+// 4 crosses a bit inside the corners (the picture's very edge is blurry): the tape goes from centre to centre
+const MK = [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
+let measureMode = false;
+function drawMarks() {
+  const a = Math.min(CW, CH) * 0.045;
+  fx.strokeStyle = '#fff'; fx.lineWidth = 2; fx.fillStyle = '#ffb000'; fx.font = `900 ${Math.round(CH * 0.06)}px system-ui`; fx.textBaseline = 'middle';
+  MK.forEach(([u, v], i) => { const x = u * CW, y = v * CH; fx.beginPath(); fx.moveTo(x - a, y); fx.lineTo(x + a, y); fx.moveTo(x, y - a); fx.lineTo(x, y + a); fx.stroke();
+    fx.beginPath(); fx.arc(x, y, a * 0.35, 0, 7); fx.stroke(); fx.textAlign = u < 0.5 ? 'left' : 'right'; fx.fillText(i + 1, x + (u < 0.5 ? 1 : -1) * a * 1.3, y + (v < 0.5 ? 1 : -1) * a * 1.3); });
+  fx.textAlign = 'center'; fx.fillStyle = '#c9cfd8'; fx.font = `600 ${Math.round(CH * 0.028)}px system-ui`;
+  fx.fillText('Mede em cm, de centro a centro: 1→2, 4→3, 1→4, 2→3, 1→3, 2→4', CW / 2, CH * 0.45);
+  fx.fillText('Depois carrega em H, escreve as medidas e «Calcular cantos»', CW / 2, CH * 0.52);
+  if (!document.fullscreenElement) { fx.fillStyle = '#ff5050'; fx.fillText('Não está em ecrã inteiro: carrega F antes de medir', CW / 2, CH * 0.62); }
+  fx.textBaseline = 'alphabetic';
+}
 function drawArena() {
-  const m = pxm();
+  const m = pxm(); if (!(m > 2)) return;
   fx.strokeStyle = '#1c1f24'; fx.lineWidth = 1; fx.beginPath();
   for (let x = 0.5; x < S.arenaW; x += 0.5) { fx.moveTo(x * m, 0); fx.lineTo(x * m, CH); }
   for (let y = 0.5; y < depthM(); y += 0.5) { fx.moveTo(0, y * m); fx.lineTo(CW, y * m); }
@@ -134,7 +169,7 @@ function drawArena() {
   fx.strokeStyle = '#3a3f48'; fx.lineWidth = 4; fx.strokeRect(2, 2, CW - 4, CH - 4);
 }
 function drawPattern() {
-  const m = pxm(), c = 0.1 * m;
+  const m = pxm(), c = 0.1 * m; if (!(c > 2)) return;   // window not laid out yet (0 px): would loop forever
   fx.fillStyle = '#101216'; fx.fillRect(0, 0, CW, CH);
   fx.lineWidth = 1; fx.strokeStyle = '#4a505c'; fx.beginPath();
   for (let x = 0; x <= CW + 1; x += c) { fx.moveTo(x, 0); fx.lineTo(x, CH); }
@@ -153,6 +188,9 @@ function drawPattern() {
   for (const [x, y] of [[inset, inset], [CW - inset, inset], [CW - inset, CH - inset], [inset, CH - inset], [CW / 2, CH / 2]]) {
     fx.fillStyle = '#fff'; for (let i = 0; i < 36; i += 2) { fx.beginPath(); fx.moveTo(x, y); fx.arc(x, y, R, i * Math.PI / 18, (i + 1) * Math.PI / 18); fx.fill(); }
   }
+  fx.fillStyle = '#ffb000'; fx.font = `900 ${Math.round(CH * 0.07)}px system-ui`; fx.textBaseline = 'middle';
+  [[1, 0.035, 0.06], [2, 0.965, 0.06], [3, 0.965, 0.94], [4, 0.035, 0.94]].forEach(([n, u, v]) => { fx.textAlign = u < 0.5 ? 'left' : 'right'; fx.fillText(n, u * CW, v * CH); });
+  fx.textBaseline = 'alphabetic';
   fx.fillStyle = '#c9cfd8'; fx.font = `600 ${Math.max(14, 0.035 * m)}px system-ui`; fx.textAlign = 'center';
   fx.fillText('quadrados de 10 cm · círculo azul com 60 cm', CW / 2, CH / 2 + 0.3 * m + Math.max(22, 0.06 * m));
   fx.textAlign = 'left';
@@ -163,7 +201,8 @@ const vid = $('vid'), prev = $('prev'), px = prev.getContext('2d');
 const AW = 480; let AH = 270;                                     // analysis resolution
 const A = document.createElement('canvas'), ax = A.getContext('2d', { willReadFrequently: true });
 A.width = AW; A.height = AH;
-let stream = null, track = null, camFps = 0, frames = 0, inside = null, blobs = [];
+const PL = { x: 0, y: 0, n: 0, saved: 0 };
+let stream = null, track = null, camFps = 0, frames = 0, inside = null, blobs = [], lastFrame = null, LA = null, Hinv = null;
 async function listCams() {
   const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
   $('camSel').innerHTML = devs.map((d, i) => `<option value="${d.deviceId}">${d.label || 'Câmara ' + (i + 1)}</option>`).join('');
@@ -209,12 +248,18 @@ const lum = (d, j) => 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
 // camera pixels that see the projected floor (only these are searched)
 function buildMask() {
   if (!S.H) { inside = null; return; }
+  POSE = cameraPose(S.H, S.arenaW, depthM(), vid.videoWidth || 1280, vid.videoHeight || 720);
+  if ($('poseMsg')) $('poseMsg').textContent = POSE ? `Câmara a ${POSE.h.toFixed(2)} m de altura; a posição do carro é corrigida pela altura dos LEDs.` : 'Não consegui calcular onde está a câmara: a posição não é corrigida pela altura dos LEDs.';
   inside = new Uint8Array(AW * AH);
   for (let y = 0; y < AH; y++) for (let x = 0; x < AW; x++) { const [u, v] = applyH(S.H, (x + .5) / AW, (y + .5) / AH); inside[y * AW + x] = u > -0.03 && u < 1.03 && v > -0.03 && v < 1.03 ? 1 : 0; }
 }
+// The camera calibration is kept against the projector's SCREEN (S.Hs: camera → screen fraction), which does not change
+// when the corners do; the camera → picture map used for tracking (S.H) is that plus the current corners.
+const mulH = (A, B) => { const r = []; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) r.push(A[i * 3] * B[j] + A[i * 3 + 1] * B[3 + j] + A[i * 3 + 2] * B[6 + j]); return r.map(v => v / r[8]); };
 function checkCal() {
+  if (S.Hs && KH) { S.H = mulH(invH(KH), S.Hs); S.Hkey = kKey(); save(); if (typeof buildMask === 'function' && A.width) buildMask(); Hinv = null; return; }
   if (!S.H) { $('calMsg').className = 'muted'; return; }
-  if (S.Hkey !== kKey()) $('calMsg').innerHTML = '<span class="warn">Mexeste nos cantos depois de calibrar: calibra outra vez.</span>';
+  if (S.Hkey !== kKey()) $('calMsg').innerHTML = '<span class="warn">Mexeste nos cantos e esta calibração é antiga: calibra a câmara uma vez (depois já não é preciso quando mudas os cantos).</span>';
 }
 
 // ---------------- automatic calibration: 9 dots, one at a time ----------------
@@ -225,8 +270,9 @@ async function calibrate(src) {
   document.body.classList.add('nopanel'); document.body.classList.remove('corners'); pattern = false; calibrating = true; calDot = null;
   await wait(900);
   const dark = new Float32Array(AW * AH); { const d = grab(src); for (let i = 0; i < AW * AH; i++) dark[i] = lum(d, i * 4); }
-  const pairs = [], G = [0.12, 0.5, 0.88];
-  for (const v of G) for (const u of G) {
+  const pairs = [], G = [0.12, 0.5, 0.88], Ki = invH(KH);
+  for (const sv of G) for (const su of G) {
+    const [u, v] = applyH(Ki, su, sv);                 // a spot on the screen, in picture fractions
     calDot = [u, v]; await wait(650);
     const d = grab(src); let best = 0, bi = -1; const diff = new Float32Array(AW * AH);
     for (let i = 0; i < AW * AH; i++) { const q = lum(d, i * 4) - dark[i]; diff[i] = q; if (q > best) { best = q; bi = i; } }
@@ -234,7 +280,7 @@ async function calibrate(src) {
     const thr = Math.max(25, best * 0.45), seen = new Uint8Array(AW * AH), st = [bi]; seen[bi] = 1; let sw = 0, sx = 0, sy = 0, n = 0;
     while (st.length && n < 6000) { const k = st.pop(), x = k % AW, y = (k / AW) | 0, w = diff[k]; sw += w; sx += w * (x + .5); sy += w * (y + .5); n++;
       for (const q of [k - 1, k + 1, k - AW, k + AW]) if (q >= 0 && q < AW * AH && !seen[q] && diff[q] >= thr && Math.abs((q % AW) - x) <= 1) { seen[q] = 1; st.push(q); } }
-    pairs.push([[sx / sw / AW, sy / sw / AH], [u, v]]);
+    pairs.push([[sx / sw / AW, sy / sw / AH], [u, v], [su, sv]]);
   }
   calibrating = false; calDot = null; pattern = patWas; if (panelWas) document.body.classList.remove('nopanel');
   const el = $('calMsg');
@@ -242,7 +288,7 @@ async function calibrate(src) {
   const H = fitH(pairs); if (!H) { el.innerHTML = '<span class="bad">Os pontos não deram uma calibração válida.</span>'; return; }
   const errs = pairs.map(([c, [u, v]]) => { const [pu, pv] = applyH(H, c[0], c[1]); return Math.hypot((pu - u) * S.arenaW, (pv - v) * depthM()) * 100; });
   const worst = Math.max(...errs), mean = errs.reduce((a, b) => a + b, 0) / errs.length;
-  S.H = H; S.Hkey = kKey(); save(); buildMask();
+  S.H = H; S.Hs = fitH(pairs.map(([c, , sc]) => [c, sc])); S.Hkey = kKey(); save(); buildMask(); Hinv = null;
   el.innerHTML = `<span class="${worst < 2 ? 'ok' : worst < 5 ? 'warn' : 'bad'}">Calibrado com ${pairs.length}/9 pontos: erro médio ${mean.toFixed(1)} cm, pior ${worst.toFixed(1)} cm.</span>` +
     (worst >= 5 ? ' Erro grande: a lente da câmara deforma muito nas pontas, ou algum ponto foi mal visto. Tenta outra vez com a sala escura.' : '');
   return { pairs, H, mean, worst };
@@ -254,10 +300,11 @@ const LEDC = { green: [0, 255, 0], red: [255, 0, 0], blue: [0, 0, 255], white: [
 function score(d, j) {
   if (S.det === 'bright') return lum(d, j);
   const r = d[j], g = d[j + 1], b = d[j + 2], L = lum(d, j);
-  const c = S.led === 'red' ? r - Math.max(g, b) : S.led === 'blue' ? b - Math.max(r, g) : S.led === 'green' ? g - Math.max(r, b) : 0;
+  const c = S.led === 'red' ? r - Math.max(g, b) : S.led === 'blue' ? b - Math.max(r, g) : S.led === 'green' ? g - Math.max(r, b) : S.led === 'two' ? Math.max(g - Math.max(r, b), r - Math.max(g, b)) : 0;
   return Math.max(c * 1.6, L > 245 ? L : 0);      // the saturated white core of an LED counts too
 }
-const toM = (cx, cy) => { const [u, v] = applyH(S.H, cx, cy); return [u * S.arenaW, v * depthM()]; };
+let POSE = null;   // where the camera is (from the calibration), for the LED-height correction
+const toM = (cx, cy) => { const [u, v] = applyH(S.H, cx, cy); return unParallax(u * S.arenaW, v * depthM(), POSE, (S.ledH ?? 6) / 100); };
 function findBlobs(d) {
   const n = AW * AH, thr = S.thr, sc = new Float32Array(n), seen = new Uint8Array(n), out = [], st = [];
   for (let i = 0; i < n; i++) if (!inside || inside[i]) sc[i] = score(d, i * 4);
@@ -268,14 +315,14 @@ function findBlobs(d) {
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
       for (const q of [k - 1, k + 1, k - AW, k + AW]) if (q >= 0 && q < n && !seen[q] && sc[q] >= thr && Math.abs((q % AW) - x) <= 1) { seen[q] = 1; st.push(q); } }
     if (a < S.minA || out.length > 200) continue;
-    const b = { cx: sx / a / AW, cy: sy / a / AH, a, box: [x0 / AW, y0 / AH, (x1 + 1) / AW, (y1 + 1) / AH] };
+    const b = { cx: sx / a / AW, cy: sy / a / AH, a, box: [x0 / AW, y0 / AH, (x1 + 1) / AW, (y1 + 1) / AH], fill: a / ((x1 - x0 + 1) * (y1 - y0 + 1)) };
     if (S.H) {
       [b.mx, b.my] = toM(b.cx, b.cy);
       const p0 = toM(b.box[0], b.box[1]), p1 = toM(b.box[2], b.box[3]);
       b.size = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
       // not the car: big shapes, the control panel, and the ring + arrow we project around the car ourselves
       const dr = T.ok && S.ring ? Math.hypot(b.mx - T.x, b.my - T.y) : 0;
-      b.bad = b.size > 0.2 || underPanel(b.mx, b.my) || (dr > 0.11 && dr < 0.27);
+      b.bad = b.size > 0.35 || (b.size > 0.12 && b.fill < 0.2) || underPanel(b.mx, b.my) || (dr > 0.11 && dr < 0.27);
     }
     out.push(b);
   }
@@ -300,15 +347,20 @@ function locate(bl, now) {
   if (!T.ok || dt > 0.5) { T.x = x; T.y = y; T.vx = T.vy = 0; }
   else { const nx = T.x + 0.6 * (x - T.x), ny = T.y + 0.6 * (y - T.y), k = Math.min(1, dt * 6);
     T.vx += k * ((nx - T.x) / dt - T.vx); T.vy += k * ((ny - T.y) / dt - T.vy); T.x = nx; T.y = ny; }
-  if (Math.hypot(T.vx, T.vy) > 0.06) T.th = Math.atan2(T.vy, T.vx);
   T.ok = true; T.t = now; T.trail.push([T.x, T.y, now]); while (T.trail.length && now - T.trail[0][2] > 3000) T.trail.shift();
 }
 let fpsT = performance.now();
 function onCamFrame() {
   if (!stream || vid.readyState < 2 || calibrating) return;
-  const now = performance.now(), d = grab();
+  const now = performance.now(), d = lastFrame = grab();
   blobs = findBlobs(d);
-  if (S.H) locate(blobs, now);
+  if (S.H) { locate(blobs, now); HD.update(now, T, cmdV, cmdW);
+    LA = T.ok && S.led === 'two' ? ledAxis(lastFrame, AW, AH, S.H, Hinv || (Hinv = invH(S.H)), T, S.arenaW, depthM()) : null;
+    if (LA && Math.hypot(T.vx, T.vy) > 0.08 && cmdV > 0.03 && Math.abs(cmdW) < 1.5) {   // learn which way the green half points
+      const o = LA.ang - Math.atan2(T.vy, T.vx); PL.x = PL.x * 0.97 + Math.cos(o); PL.y = PL.y * 0.97 + Math.sin(o); PL.n++;
+      if (PL.n >= 20 && Math.hypot(PL.x, PL.y) > 0.6 * Math.min(PL.n, 33)) { S.carLedPhi = +Math.atan2(PL.y, PL.x).toFixed(3); if (now - PL.saved > 3000) { PL.saved = now; save(); } } }
+    if (LA && S.carLedPhi != null) HD.led(now, LA.ang, S.carLedPhi);
+    T.th = HD.th; }
   frames++; if (now - fpsT > 1000) { camFps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; showTrack(); }
   drawPreview();
 }
@@ -339,6 +391,9 @@ function drawCar() {
 }
 
 // ---------------- car over Bluetooth (same protocol as Jarvis /robo) ----------------
+// the micro:bit's Bluetooth UART takes at most 20 bytes per write (a longer one dropped the link, e.g. the two-colour
+// LED command): send in 20-byte pieces — the car reads up to the end of the line, so the pieces join up again
+async function writeChunks(ch, text) { const b = new TextEncoder().encode(text); for (let i = 0; i < b.length; i += 20) await ch.writeValue(b.slice(i, i + 20)); }
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 let dev = null, tx = null, rx = null, busy = false, queued = [], pendingDrive = null, teleT = 0, lastDrive = '', lastSendT = 0;
 $('bt').onclick = async () => {
@@ -370,15 +425,55 @@ async function pump() {
   let cmd; if (queued.length) cmd = queued.shift(); else { cmd = pendingDrive; pendingDrive = null; }
   if (cmd == null) return;
   busy = true;
-  try { await Promise.race([rx.writeValue(new TextEncoder().encode(cmd + '\n')), wait(1000).then(() => { throw new Error('timeout'); })]); } catch (e) {}
+  try { await Promise.race([writeChunks(rx, cmd + '\n'), wait(1000).then(() => { throw new Error('timeout'); })]); } catch (e) {}
   busy = false; pump();
 }
 const send = cmd => { queued.push(cmd); pump(); };
-function setLed() { const c = LEDC[S.led]; send(`C${c[0]},${c[1]},${c[2]},255`); }
+function setLed() { send(ledCmd(S.led)); }
+
+// ---------------- measure how the car answers the wheel numbers (used by the games) ----------------
+let measuring = false;
+async function measureCar() {
+  const el = $('measMsg');
+  if (!rx) { el.innerHTML = '<span class="warn">Liga o carro primeiro.</span>'; return; }
+  if (!S.H || !T.ok) { el.innerHTML = '<span class="warn">A câmara tem de estar calibrada e a ver o carro (anel à volta dele).</span>'; return; }
+  measuring = true; const runs = [];
+  const run = async (l, r, ms) => { const pts = [], t0 = performance.now();
+    while (performance.now() - t0 < ms) { pendingDrive = `M${l},${r}`; lastDrive = pendingDrive; lastSendT = performance.now(); pump();
+      if (T.ok) pts.push([performance.now() - t0, T.x, T.y, LA ? LA.ang : null]); await wait(40); }
+    pendingDrive = 'M0,0'; lastDrive = pendingDrive; pump(); await wait(800); return pts; };
+  try {
+    el.textContent = 'A medir… (1/3 devagar)'; const A = await run(40, 40, 1000);
+    el.textContent = 'A medir… (2/3 depressa)'; const B = await run(80, 80, 1000);
+    el.textContent = 'A medir… (3/3 curva para a direita)'; const C = await run(85, 45, 1200);
+    const seg = (pts, t0, t1) => pts.filter(p => p[0] >= t0 && p[0] <= t1);
+    const speed = pts => { const q = seg(pts, 300, 1e9); if (q.length < 4) return null; const a = q[0], b = q.at(-1); return Math.hypot(b[1] - a[1], b[2] - a[2]) / ((b[0] - a[0]) / 1000); };
+    const dir = q => q.length < 2 ? null : Math.atan2(q.at(-1)[2] - q[0][2], q.at(-1)[1] - q[0][1]);
+    const sA = speed(A), sB = speed(B);
+    if (sA == null || sB == null || sB < 0.03) { el.innerHTML = '<span class="bad">Não vi o carro a andar. Confirma que a câmara o segue (anel) e que tem espaço à frente.</span>'; return; }
+    const a = Math.max(0.0005, (sB - sA) / 40), p0 = Math.max(0, Math.min(60, 40 - sA / a));
+    const d0 = dir(seg(C, 150, 500)), d1 = dir(seg(C, 850, 1200));
+    if (d0 == null || d1 == null) { el.innerHTML = '<span class="bad">Perdi o carro durante a curva. Tenta outra vez com mais espaço.</span>'; return; }
+    const dth = Math.atan2(Math.sin(d1 - d0), Math.cos(d1 - d0)), wObs = dth / 0.7;
+    const vl = a * (85 - p0), vr = a * Math.max(0, 45 - p0), B2 = Math.abs(wObs) > 0.1 ? (vl - vr) / Math.abs(wObs) : 0.1;
+    // two-colour LEDs: the angle between "red→green" and the way it drove straight = where green sits on the car
+    let ledTxt = ''; const offs = [];
+    for (const P of [A, B]) { const q = seg(P, 300, 1e9), md = dir(q); if (md == null) continue; for (const p of q) if (p[3] != null) offs.push(p[3] - md); }
+    if (offs.length >= 5) { const phi = Math.atan2(offs.reduce((a, o) => a + Math.sin(o), 0), offs.reduce((a, o) => a + Math.cos(o), 0));
+      const spread = Math.sqrt(offs.reduce((a, o) => a + Math.atan2(Math.sin(o - phi), Math.cos(o - phi)) ** 2, 0) / offs.length) * 57.3;
+      S.carLedPhi = +phi.toFixed(3); ledTxt = ` LEDs: o verde está a ${(phi * 57.3).toFixed(0)}° da frente (±${spread.toFixed(0)}°)${spread > 25 ? ' — <span class="warn">leitura instável; baixa a luz ou o limiar e mede outra vez</span>' : ''}; a seta já aparece com o carro parado.`; }
+    else if (S.led === 'two') ledTxt = ' <span class="warn">Não vi as duas cores dos LEDs (firmware novo instalado? câmara a ver cor?): a direção continua a vir só do movimento.</span>';
+    Object.assign(S, { carA: +a.toFixed(5), carP0: +p0.toFixed(1), carB: +Math.min(0.3, Math.max(0.05, B2)).toFixed(3), carMirror: wObs < 0 }); save();
+    el.innerHTML = `<span class="ok">Medido:</span> ${(sA * 100).toFixed(0)} cm/s a 40 %, ${(sB * 100).toFixed(0)} cm/s a 80 % → máximo ~${(a * (100 - p0) * 100).toFixed(0)} cm/s, começa a andar a ~${p0.toFixed(0)} %. ` +
+      `Curva: ${(dth * 57.3).toFixed(0)}° (${wObs < 0 ? 'imagem espelhada — fica compensado' : 'sentido normal'}).${ledTxt} O jogo já usa estes valores.`;
+  } finally { measuring = false; pendingDrive = 'M0,0'; pump(); }
+}
+$('measCar').onclick = measureCar;
 
 // ---------------- driving: gamepad / keys → wheels ----------------
 const keys = new Set();
-let hornWas = false, stopWas = false;
+let hornWas = false, stopWas = false, cmdV = 0, cmdW = 0;
+const HD = new Heading();
 function drive(now) {
   let x = 0, y = 0;
   for (const p of navigator.getGamepads ? navigator.getGamepads() : []) { if (!p) continue;
@@ -390,8 +485,18 @@ function drive(now) {
     if (keys.has('arrowup') || keys.has('w')) y = 1; if (keys.has('arrowdown') || keys.has('s')) y = -1;
     if (keys.has('arrowleft') || keys.has('a')) x = -1; if (keys.has('arrowright') || keys.has('d')) x = 1;
   }
-  let l = y + x * 0.8, r = y - x * 0.8; const k = Math.max(1, Math.abs(l), Math.abs(r));
-  l = Math.round(l / k * S.maxSpd); r = Math.round(r / k * S.maxSpd); if (Math.abs(l) < 8) l = 0; if (Math.abs(r) < 8) r = 0;
+  let l, r;
+  if (S.drvMode !== 'tank') {   // easy: the stick is a direction on the picture (up = up), the car turns and goes there
+    let { v, w } = easyCmd(x, -y, HD.th, carVmax(S, S.maxSpd));
+    if ((Math.abs(w) > 0.3 || v > 0.01) && HD.sinceFix(now) > 1.5 && T.ok) v = Math.max(v, 0.08);   // re-learn where it points
+    [l, r] = wheelsFor(v, w, S); cmdV = v; cmdW = w;
+  } else {
+    l = y + x * 0.8; r = y - x * 0.8; const k = Math.max(1, Math.abs(l), Math.abs(r));
+    l = Math.round(l / k * S.maxSpd); r = Math.round(r / k * S.maxSpd); if (Math.abs(l) < 8) l = 0; if (Math.abs(r) < 8) r = 0;
+    const sp = p => Math.sign(p) * (S.carA ?? 0.006) * Math.max(0, Math.abs(p) - (S.carP0 ?? 18));
+    cmdV = (sp(l) + sp(r)) / 2; cmdW = (sp(l) - sp(r)) / (S.carB ?? 0.1) * (S.carMirror ? -1 : 1);
+  }
+  if (measuring) return;
   const cmd = `M${l},${r}`, moving = l || r;
   if (rx && (cmd !== lastDrive || (moving && now - lastSendT > 150))) { pendingDrive = cmd; lastDrive = cmd; lastSendT = now; pump(); }
 }
@@ -425,14 +530,65 @@ $('fs').onclick = fullscreen;
 $('cornersBtn').onclick = toggleCorners;
 $('pat').onclick = togglePattern;
 $('resetK').onclick = () => { K = K0.map(p => p.slice()); applyK(); saveK(); };
+
+// ---------------- keystone from tape measurements ----------------
+// The 6 distances between the 4 corners of the uncorrected picture give its shape on the floor. Then: the largest
+// rectangle with the screen's proportions that fits inside it, lined up with the bottom edge (4→3), and the picture's
+// corners are moved there. Floor frame: corner 4 at (0,0), corner 3 at (bottom,0), y grows towards the bottom edge.
+const MEAS = ['m12', 'm43', 'm14', 'm23', 'm13', 'm24'];
+MEAS.forEach(id => { const v = lsGet('robo-measure2', {})[id]; if (v) $(id).value = v; $(id).onchange = () => { const o = lsGet('robo-measure2', {}); o[id] = +$(id).value; lsSet('robo-measure2', o); }; });
+$('mStart').onclick = () => { K = K0.map(p => p.slice()); applyK(); saveK(); measureMode = true; setPanel(false);
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+  $('mMsg').textContent = 'Cruzes no chão. Mede as 6 distâncias, carrega em H, escreve-as e carrega em «Calcular cantos».'; };
+function keystoneFromTape(m) {
+  // the 4 crosses on the floor (cm): cross 4 at (0,0), cross 3 on the x axis, y towards the top of the picture (negative).
+  // 6 tape lengths for 5 unknowns: a least-squares fit spreads the usual 1–3 cm of tape error instead of failing.
+  const meas = [[0, 1, m.m12], [3, 2, m.m43], [0, 3, m.m14], [1, 2, m.m23], [0, 2, m.m13], [1, 3, m.m24]];
+  const pts = p => [[p[0], p[1]], [p[2], p[3]], [p[4], 0], [0, 0]];
+  const res = p => { const P = pts(p); return meas.map(([i, j, d]) => Math.hypot(P[i][0] - P[j][0], P[i][1] - P[j][1]) - d); };
+  const circ = (r0, r1, b) => { const x = (r0 * r0 - r1 * r1 + b * b) / (2 * b); return [x, -Math.sqrt(Math.max(1, r0 * r0 - x * x))]; };
+  const b0 = m.m43, P1 = circ(m.m14, m.m13, b0), P2 = circ(m.m24, m.m23, b0);
+  let p = [P1[0], P1[1], P2[0], P2[1], b0];
+  for (let it = 0; it < 30; it++) {                      // Gauss-Newton
+    const r = res(p), J = p.map((_, k) => { const q = p.slice(); q[k] += 0.01; return res(q).map((v, i) => (v - r[i]) / 0.01); });
+    const A = p.map((_, a) => p.map((_, b) => r.reduce((s, _, i) => s + J[a][i] * J[b][i], 0))), g = p.map((_, a) => r.reduce((s, v, i) => s + J[a][i] * v, 0));
+    for (let c = 0; c < 5; c++) { let q = c; for (let k = c + 1; k < 5; k++) if (Math.abs(A[k][c]) > Math.abs(A[q][c])) q = k; [A[c], A[q]] = [A[q], A[c]]; [g[c], g[q]] = [g[q], g[c]];
+      for (let k = 0; k < 5; k++) if (k !== c) { const f = A[k][c] / A[c][c]; for (let j = c; j < 5; j++) A[k][j] -= f * A[c][j]; g[k] -= f * g[c]; } }
+    p = p.map((v, k) => v - g[k] / A[k][k]);
+  }
+  const rr = res(p), rms = Math.sqrt(rr.reduce((s, v) => s + v * v, 0) / rr.length), worst = Math.max(...rr.map(Math.abs));
+  if (!isFinite(rms)) return { err: 'As medidas não fecham. Confirma que cada medida é entre as cruzes certas (1 2 em cima, 4 3 em baixo).' };
+  const M = pts(p), Hs = fitH(MK.map((q, i) => [M[i], q])), Hf = invH(Hs);   // floor (cm) ↔ screen fraction
+  const F = K0.map(([u, v]) => applyH(Hf, u, v));                             // the whole projected picture on the floor
+  // the game's picture covers ALL of it: a rectangle with the screen's proportions around it, true to scale.
+  // The parts of that rectangle outside the projection simply are not shown.
+  const asp = screen.width && screen.height ? screen.width / screen.height : CW / CH;
+  let x0 = Math.min(...F.map(q => q[0])), x1 = Math.max(...F.map(q => q[0])), y0 = Math.min(...F.map(q => q[1])), y1 = Math.max(...F.map(q => q[1]));
+  let w = x1 - x0, h = y1 - y0; if (w / h < asp) { const e = (h * asp - w) / 2; x0 -= e; x1 += e; w = h * asp; } else { const e = (w / asp - h) / 2; y0 -= e; y1 += e; h = w / asp; }
+  const rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const fw = (Math.hypot(F[1][0] - F[0][0], F[1][1] - F[0][1]) + Math.hypot(F[2][0] - F[3][0], F[2][1] - F[3][1])) / 2, fh = (Math.hypot(F[3][0] - F[0][0], F[3][1] - F[0][1]) + Math.hypot(F[2][0] - F[1][0], F[2][1] - F[1][1])) / 2;
+  return { K: rect.map(([x, y]) => applyH(Hs, x, y)), w, h, fw, fh, rms, worst };
+}
+$('mCalc').onclick = () => {
+  const m = {}; for (const id of MEAS) { m[id] = +$(id).value; if (!(m[id] > 0)) { $('mMsg').innerHTML = '<span class="warn">Faltam medidas.</span>'; return; } }
+  const r = keystoneFromTape(m), el = $('mMsg');
+  if (r.err) { el.innerHTML = `<span class="bad">${r.err}</span>`; return; }
+  measureMode = false; K = r.K; applyK(); saveK(); S.arenaW = +(r.w / 100).toFixed(3); $('arenaW').value = S.arenaW; save(); pattern = true; $('pat').classList.add('on');
+  el.innerHTML = `<span class="${r.worst < 4 ? 'ok' : 'warn'}">Projeção no chão: ${(r.fw / 100).toFixed(2)} × ${(r.fh / 100).toFixed(2)} m, usada toda.</span> ` +
+    `Medidas acertadas entre si (desvio médio ${r.rms.toFixed(1)} cm${r.worst >= 4 ? `, uma com ${r.worst.toFixed(1)} cm — <span class="warn">confirma essa</span>` : ''}). ` +
+    'Os quadrados da grelha devem ter 10 cm (em ecrã inteiro). ' + (S.Hs ? 'A calibração da câmara acompanhou sozinha.' : 'Agora calibra a câmara (só desta vez).');
+};
 $('camStart').onclick = camStart;
 $('camSel').onchange = () => stream && camStart();
 $('calib').onclick = () => calibrate();
 $('clearCal').onclick = () => { S.H = null; S.Hkey = ''; save(); buildMask(); T.ok = false; $('calMsg').textContent = 'Calibração apagada.'; };
 const bindRange = (id, key, fmt = v => v) => { const r = $(id); r.value = S[key]; $(id + 'V').textContent = fmt(S[key]); r.oninput = () => { S[key] = +r.value; $(id + 'V').textContent = fmt(S[key]); save(); }; };
+if (S.ledH == null) S.ledH = 6;
+bindRange('ledH', 'ledH', v => v + ' cm');
 bindRange('thr', 'thr'); bindRange('minA', 'minA'); bindRange('maxSpd', 'maxSpd', v => v + '%');
 $('arenaW').value = S.arenaW; $('arenaW').onchange = () => { S.arenaW = Math.max(0.5, +$('arenaW').value || 2); save(); };
 $('det').value = S.det; $('det').onchange = () => { S.det = $('det').value; save(); };
+$('drvMode').value = S.drvMode || 'easy'; $('drvMode').onchange = () => { S.drvMode = $('drvMode').value; save(); };
 $('led').value = S.led; $('led').onchange = () => { S.led = $('led').value; save(); if (rx) setLed(); };
 const tog = (id, key) => { $(id).classList.toggle('on', S[key]); $(id).onclick = () => { S[key] = !S[key]; save(); $(id).classList.toggle('on', S[key]); }; };
 tog('ringBtn', 'ring'); tog('trailBtn', 'trail');
@@ -447,7 +603,7 @@ function frame(now) { drive(now); drawFloor(); hud(now); requestAnimationFrame(f
 resize(); listCams().catch(() => {}); requestAnimationFrame(frame);
 
 // test hook
-window.__real = { S, T, K, fitH, applyH, invH, calibrate, findBlobs, locate, setCalDotSource: null, get calDot() { return calDot; }, get blobs() { return blobs; }, grab, setAH(h) { AH = h; A.width = AW; A.height = h; } };
+window.__real = { S, T, get K() { return K; }, get KH() { return KH; }, keystoneFromTape, fitH, applyH, invH, calibrate, findBlobs, locate, setCalDotSource: null, get calDot() { return calDot; }, get blobs() { return blobs; }, grab, setAH(h) { AH = h; A.width = AW; A.height = h; } };
 </script>
 </body>
 </html>
