@@ -153,7 +153,7 @@ function fitTilt(mode) {
 function onResize(w = innerWidth, h = innerHeight) {   // no reload: reloading would drop out of fullscreen
   CW = w; CH = h; renderer.setSize(CW, CH);
   for (const c of [camTilt, camTop]) { c.aspect = CW / CH; c.updateProjectionMatrix(); }
-  S.corners = [[0,0],[CW,0],[CW,CH],[0,CH]]; save(); applyKeystone(); if (typeof QUAD !== 'undefined' && QUAD) fitQuad(); else if (typeof T !== 'undefined') fitTilt(S.tiltMode);
+  applyKeystone(); if (typeof QUAD !== 'undefined' && QUAD) fitQuad(); else if (typeof T !== 'undefined') fitTilt(S.tiltMode);
 }
 addEventListener('resize', () => onResize());
 
@@ -165,14 +165,17 @@ function homography(w, h, q) {
     for (let r = 0; r < 8; r++) if (r !== c) { const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f*A[c][k]; B[r] -= f*B[c]; } }
   const [a,b,c,d,e,f,g,hh] = B.map((v,i) => v / A[i][i]); return [a,d,0,g, b,e,0,hh, 0,0,1,0, c,f,0,1];
 }
-if (!S.corners) S.corners = [[0,0],[CW,0],[CW,CH],[0,CH]];
-function applyKeystone() { cv.style.transform = 'matrix3d(' + homography(CW, CH, S.corners).join(',') + ')';
-  document.querySelectorAll('.corner').forEach(el => { const [x,y] = S.corners[+el.dataset.i]; el.style.left = x+'px'; el.style.top = y+'px'; }); }
+// keystone shared with real.html: where each corner of the picture lands, as a fraction of the screen (survives fullscreen/resizes)
+let KN; try { KN = JSON.parse(localStorage.getItem('robo-keystone')); } catch (e) {}
+if (!Array.isArray(KN) || KN.length !== 4) KN = [[0,0],[1,0],[1,1],[0,1]];
+const saveKN = () => { try { localStorage.setItem('robo-keystone', JSON.stringify(KN)); } catch (e) {} };
+function applyKeystone() { const q = KN.map(([x, y]) => [x * CW, y * CH]); cv.style.transform = 'matrix3d(' + homography(CW, CH, q).join(',') + ')';
+  document.querySelectorAll('.corner').forEach(el => { const [x,y] = q[+el.dataset.i]; el.style.left = x+'px'; el.style.top = y+'px'; }); }
 applyKeystone();
 let dragging = null;
 document.querySelectorAll('.corner').forEach(el => el.addEventListener('pointerdown', e => { dragging = +el.dataset.i; el.setPointerCapture(e.pointerId); }));
-addEventListener('pointermove', e => { if (dragging !== null) { S.corners[dragging] = [e.clientX, e.clientY]; applyKeystone(); } });
-addEventListener('pointerup', () => { if (dragging !== null) { dragging = null; save(); } });
+addEventListener('pointermove', e => { if (dragging !== null) { KN[dragging] = [e.clientX / CW, e.clientY / CH]; applyKeystone(); } });
+addEventListener('pointerup', () => { if (dragging !== null) { dragging = null; saveKN(); } });
 
 // ---------------- track (3 fixed layouts in a unit box, first segment = start straight) ----------------
 const LAYOUTS = {
