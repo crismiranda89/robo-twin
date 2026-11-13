@@ -13,6 +13,7 @@
     background:rgba(32,34,40,.86); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); color:#eceef2; z-index:9; padding:14px 16px; box-shadow:-6px 0 24px rgba(0,0,0,.35); }
   #settings h3 { color:#8cc8ff; } #settings .dim, #settings small { color:#9aa0aa; font-size:12px; } #settings small { display:block; font-weight:400; }
   #settings select, #settings button { background:#3a3d46; color:#eceef2; border:1px solid #555a66; border-radius:6px; padding:4px 8px; }
+  #settings kbd { background:#3a3d46; color:#eceef2; border:1px solid #555a66; }
   #settings button.on { background:#1a73c9; border-color:#1a73c9; }
   #settings .mhead { display:flex; justify-content:space-between; align-items:center; }
   #settings .tabs button { font-weight:600; padding:6px 14px; }
@@ -1014,7 +1015,7 @@ document.querySelectorAll('#touchbar button').forEach(b => b.addEventListener('c
 
 // ---------- UI ----------
 const $ = id => document.getElementById(id);
-let showHelp = true, showSettings = false, showBudget = false, calib = false, paused = false;
+let showHelp = false, showSettings = false, showBudget = false, calib = false, paused = false;
 function hotkey(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.target.tagName === 'BUTTON' && !e.target.closest('#touchbar')) return;
@@ -1055,7 +1056,7 @@ function buildSettings() {
   const sl = (k, label, mn, mx, st) => `<div class="row"><label>${label}</label><input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}"><span class="v" id="v_${k}"></span></div>`;
   const sel = (k, label, opts) => `<div class="row"><label>${label}</label><select data-k="${k}">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select></div>`;
   const step = (k, label, hint) => `<div class="row step"><label>${label}<small>${hint}</small></label><button data-step="${k}" data-d="-1">−</button><span class="n">${S[k]}</span><button data-step="${k}" data-d="1">+</button></div>`;
-  let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button></div><a href="https://192.168.68.200:8444/inicio" title="Voltar à página de início da casa" style="color:inherit;text-decoration:none;font-size:13px;opacity:.8;margin-left:auto;margin-right:10px">← Início</a><button id="menuClose">✕</button></div>`;
+  let h = `<div class="mhead"><div class="tabs"><button data-tab="game" class="${menuTab === 'game' ? 'on' : ''}">Game</button><button data-tab="setup" class="${menuTab === 'setup' ? 'on' : ''}">Setup</button><button data-tab="help" class="${menuTab === 'help' ? 'on' : ''}">Help</button></div><a href="https://192.168.68.200:8444/inicio" title="Voltar à página de início da casa" style="color:inherit;text-decoration:none;font-size:13px;opacity:.8;margin-left:auto;margin-right:10px">← Início</a><button id="menuClose">✕</button></div>`;
   if (menuTab === 'game') {
     h += `<h3>Game</h3><div class="row"><button data-game="race" class="${S.game === 'race' ? 'on' : ''}">Race</button><button data-game="ball" class="${S.game === 'ball' ? 'on' : ''}">Ball</button><button data-act="reset">Restart</button></div>`;
     h += `<div class="row"><a href="race3d.html" style="color:inherit">🏎️ Robo GP 3D</a> · <a href="tanks.html" style="color:inherit">🪖 Beach Tanks</a></div>`;
@@ -1074,11 +1075,13 @@ function buildSettings() {
     h += `<h3>AI drivers</h3>` + sl('aiSkill', 'AI top speed (%)', 20, 100, 5) + sl('aiGrip', 'Corner grip (m/s²)', 0.3, 4, 0.1);
     h += sel('aiGoo', 'AI shoots goo', [['on', 'yes'], ['off', 'no']]) + sel('showRays', 'Show what AI sees', [['false', 'no'], ['true', 'yes']]);
     h += `<div class="row"><button id="trainBtn">${Trainer.on ? 'Stop training' : 'Train NN'} (N)</button><button id="brainReset">Forget NN</button></div>`;
-  } else {
+  } else if (menuTab === 'setup') {
     h += `<h3>Floor</h3>` + sl('arenaW', 'Projected width (m)', 0.5, 6, 0.01) + sl('trackW', 'Track width (m)', 0.18, 0.5, 0.01);
     h += `<h3>Robot (KS0426 guesses)</h3>` + sl('maxSpeed', 'Top speed (m/s)', 0.1, 2, 0.05) + sl('maxAccel', 'Accel (m/s²)', 0.2, 8, 0.1) + sl('maxTurn', 'Turn rate (rad/s)', 0.5, 10, 0.1) + sl('slip', 'Wheel slip', 0, 0.5, 0.01);
     h += `<h3>Latency chain</h3>` + sl('btMs', 'Bluetooth (ms)', 0, 300, 1) + sl('camFps', 'Camera fps', 5, 120, 1) + sl('captureMs', 'Capture (ms)', 0, 2000, 1) + sl('detectMs', 'Detection (ms)', 0, 100, 1) + sl('decideMs', 'Decision (ms)', 0, 50, 1) + sl('camNoiseCm', 'Camera noise (cm)', 0, 5, 0.1) + sl('dropPct', 'Dropped frames (%)', 0, 50, 1);
     h += `<p class="dim">Tapo RTSP ≈ capture 1500 ms. USB 60 fps ≈ 25 ms.</p><div class="row"><button id="defaults">Reset everything</button></div>`;
+  } else {
+    h += `<div style="line-height:1.55;margin-top:10px">${$('help').innerHTML}</div>`;
   }
   const el = $('settings'); el.innerHTML = h;
   el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { menuTab = b.dataset.tab; buildSettings(); });
